@@ -4,12 +4,12 @@ pragma solidity ^0.8.30;
 import {Test} from "forge-std/Test.sol";
 import {Vault} from "../src/Vault.sol";
 import {VaultFactory} from "../src/VaultFactory.sol";
-import {FundCreated} from "../src/factory/VaultFactoryEvents.sol";
-import {ZeroAddress, InvalidBeacon} from "../src/factory/VaultFactoryErrors.sol";
+import {VaultFactoryEvents} from "../src/factory/VaultFactoryEvents.sol";
+import {VaultFactoryErrors} from "../src/factory/VaultFactoryErrors.sol";
 import {USDC} from "./mocks/USDC.sol";
 import {UpgradeableBeacon} from "@openzeppelin/contracts/proxy/beacon/UpgradeableBeacon.sol";
 
-contract VaultFactoryTest is Test {
+contract VaultFactoryTest is Test, VaultFactoryEvents {
     uint256 public constant SECONDS_PER_EPOCH = 86400;
 
     USDC public usdc;
@@ -34,13 +34,13 @@ contract VaultFactoryTest is Test {
 
     /// @notice 构造函数传入零地址 beacon 时应回滚
     function test_constructor_reverts_whenBeaconIsZeroAddress() public {
-        vm.expectRevert(ZeroAddress.selector);
+        vm.expectRevert(VaultFactoryErrors.ZeroAddress.selector);
         new VaultFactory(address(0), owner);
     }
 
     /// @notice 构造函数传入无效 beacon 地址时应回滚
     function test_constructor_reverts_whenBeaconIsInvalid() public {
-        vm.expectRevert(InvalidBeacon.selector);
+        vm.expectRevert(VaultFactoryErrors.InvalidBeacon.selector);
         new VaultFactory(address(this), owner);
     }
 
@@ -61,7 +61,7 @@ contract VaultFactoryTest is Test {
     /// @notice manager 为零地址时 createFund 应回滚
     function test_createFund_reverts_whenManagerIsZero() public {
         vm.prank(owner);
-        vm.expectRevert(ZeroAddress.selector);
+        vm.expectRevert(VaultFactoryErrors.ZeroAddress.selector);
         factory.createFund(
             "Alpha Fund Share", "AFS", address(usdc), address(0), admin, operator, executor, SECONDS_PER_EPOCH
         );
@@ -74,7 +74,7 @@ contract VaultFactoryTest is Test {
             "Alpha Fund Share", "AFS", address(usdc), manager, admin, operator, executor, SECONDS_PER_EPOCH
         );
 
-        assertEq(factory.fundCount(), 1);
+        assertEq(factory.totalFunds(), 1);
         assertEq(factory.fundIds(vaultAddr), 1);
 
         (
@@ -129,7 +129,7 @@ contract VaultFactoryTest is Test {
         vm.stopPrank();
 
         assertTrue(vault1 != vault2);
-        assertEq(factory.fundCount(), 2);
+        assertEq(factory.totalFunds(), 2);
         assertEq(factory.fundIds(vault1), 1);
         assertEq(factory.fundIds(vault2), 2);
     }

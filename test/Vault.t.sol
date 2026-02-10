@@ -3,7 +3,7 @@ pragma solidity ^0.8.30;
 
 import {Test} from "forge-std/Test.sol";
 import {Vault} from "../src/Vault.sol";
-import {ZeroAddress, InvalidSecondsPerEpoch} from "../src/vault/VaultErrors.sol";
+import {VaultErrors} from "../src/vault/VaultErrors.sol";
 import {USDC} from "./mocks/USDC.sol";
 import {UpgradeableBeacon} from "@openzeppelin/contracts/proxy/beacon/UpgradeableBeacon.sol";
 import {VaultFactory} from "../src/VaultFactory.sol";
@@ -22,6 +22,8 @@ contract VaultTest is Test {
     address admin = makeAddr("admin");
     address operator = makeAddr("operator");
     address executor = makeAddr("executor");
+    address alice = makeAddr("alice");
+    address bob = makeAddr("bob");
 
     function setUp() public {
         vm.warp(INITIAL_TIMESTAMP);
@@ -62,7 +64,7 @@ contract VaultTest is Test {
     function test_initialize_reverts_whenBaseAssetIsZero() public {
         VaultFactory localFactory = _deployFactory(owner);
         vm.prank(owner);
-        vm.expectRevert(ZeroAddress.selector);
+        vm.expectRevert(VaultErrors.ZeroAddress.selector);
         localFactory.createFund(
             "Alpha Fund Share", "AFS", address(0), manager, admin, operator, executor, SECONDS_PER_EPOCH
         );
@@ -72,7 +74,7 @@ contract VaultTest is Test {
     function test_initialize_reverts_whenAdminIsZero() public {
         VaultFactory localFactory = _deployFactory(owner);
         vm.prank(owner);
-        vm.expectRevert(ZeroAddress.selector);
+        vm.expectRevert(VaultErrors.ZeroAddress.selector);
         localFactory.createFund(
             "Alpha Fund Share", "AFS", address(usdc), manager, address(0), operator, executor, SECONDS_PER_EPOCH
         );
@@ -82,7 +84,7 @@ contract VaultTest is Test {
     function test_initialize_reverts_whenOperatorIsZero() public {
         VaultFactory localFactory = _deployFactory(owner);
         vm.prank(owner);
-        vm.expectRevert(ZeroAddress.selector);
+        vm.expectRevert(VaultErrors.ZeroAddress.selector);
         localFactory.createFund(
             "Alpha Fund Share", "AFS", address(usdc), manager, admin, address(0), executor, SECONDS_PER_EPOCH
         );
@@ -92,7 +94,7 @@ contract VaultTest is Test {
     function test_initialize_reverts_whenExecutorIsZero() public {
         VaultFactory localFactory = _deployFactory(owner);
         vm.prank(owner);
-        vm.expectRevert(ZeroAddress.selector);
+        vm.expectRevert(VaultErrors.ZeroAddress.selector);
         localFactory.createFund(
             "Alpha Fund Share", "AFS", address(usdc), manager, admin, operator, address(0), SECONDS_PER_EPOCH
         );
@@ -102,7 +104,7 @@ contract VaultTest is Test {
     function test_initialize_reverts_whenSecondsPerEpochIsZero() public {
         VaultFactory localFactory = _deployFactory(owner);
         vm.prank(owner);
-        vm.expectRevert(InvalidSecondsPerEpoch.selector);
+        vm.expectRevert(VaultErrors.InvalidSecondsPerEpoch.selector);
         localFactory.createFund("Alpha Fund Share", "AFS", address(usdc), manager, admin, operator, executor, 0);
     }
 
@@ -121,6 +123,18 @@ contract VaultTest is Test {
 
         vm.warp(block.timestamp + (2 * SECONDS_PER_EPOCH) + 123);
         assertEq(vault.currentEpoch(), epoch + 3);
+    }
+
+    /// @notice 禁止互荐：A 推荐 B 后，B 再推荐 A 应回滚
+    function test_bindReferrer_reverts_whenMutualReferral() public {
+        vm.prank(alice);
+        vault.bindReferrer(bob);
+        assertEq(vault.referrerOf(alice), bob);
+
+        vm.prank(bob);
+        vm.expectRevert(VaultErrors.CircularReferral.selector);
+        vault.bindReferrer(alice);
+        assertEq(vault.referrerOf(bob), address(0));
     }
 
     function _deployFactory(address initialOwner) internal returns (VaultFactory localFactory) {
