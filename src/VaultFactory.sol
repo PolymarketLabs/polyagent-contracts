@@ -1,36 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity ^0.8.30;
 
-import {Vault} from "./Vault.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {BeaconProxy} from "@openzeppelin/contracts/proxy/beacon/BeaconProxy.sol";
 import {UpgradeableBeacon} from "@openzeppelin/contracts/proxy/beacon/UpgradeableBeacon.sol";
+import {IVault} from "./interfaces/IVault.sol";
+import {IVaultFactory} from "./interfaces/IVaultFactory.sol";
+import {Fund} from "./factory/VaultFactoryTypes.sol";
+import "./factory/VaultFactoryEvents.sol";
+import "./factory/VaultFactoryErrors.sol";
 
-struct Fund {
-    address vault;
-    address baseAsset;
-    address manager; // 基金经理，当前版本只记录信息，不参与其他验证与交互
-    address admin;
-    address operator;
-    address executor;
-    uint256 createdAt;
-}
-
-event FundCreated(
-    address indexed vault,
-    address indexed baseAsset,
-    address indexed manager,
-    address admin,
-    address operator,
-    address executor,
-    uint256 createdAt,
-    uint256 fundId
-);
-
-error ZeroAddress();
-error InvalidBeacon();
-
-contract VaultFactory is Ownable {
+contract VaultFactory is Ownable, IVaultFactory {
     UpgradeableBeacon public immutable BEACON; // UpgradeableBeacon 地址（全局一个）
 
     uint256 public nextFundId = 1; // fundId递增器
@@ -60,12 +40,12 @@ contract VaultFactory is Ownable {
         address operator,
         address executor,
         uint256 secondsPerEpoch
-    ) external onlyOwner returns (address vault) {
+    ) external override onlyOwner returns (address vault) {
         // 1. check params
         if (address(0) == manager) revert ZeroAddress();
         // 2. encode initialize call data
         bytes memory initData = abi.encodeCall(
-            Vault.initialize, (tokenName, tokenSymbol, baseAsset, admin, operator, executor, secondsPerEpoch)
+            IVault.initialize, (tokenName, tokenSymbol, baseAsset, admin, operator, executor, secondsPerEpoch)
         );
 
         // 3. deploy BeaconProxy
@@ -88,7 +68,7 @@ contract VaultFactory is Ownable {
         emit FundCreated(vault, baseAsset, manager, admin, operator, executor, block.timestamp, fundId);
     }
 
-    function fundCount() external view returns (uint256) {
+    function fundCount() external view override returns (uint256) {
         return nextFundId - 1;
     }
 }

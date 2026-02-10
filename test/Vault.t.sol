@@ -2,7 +2,8 @@
 pragma solidity ^0.8.30;
 
 import {Test} from "forge-std/Test.sol";
-import {Vault, ZeroAddress, InvalidSecondsPerEpoch} from "../src/Vault.sol";
+import {Vault} from "../src/Vault.sol";
+import {ZeroAddress, InvalidSecondsPerEpoch} from "../src/vault/VaultErrors.sol";
 import {USDC} from "./mocks/USDC.sol";
 import {UpgradeableBeacon} from "@openzeppelin/contracts/proxy/beacon/UpgradeableBeacon.sol";
 import {VaultFactory} from "../src/VaultFactory.sol";
