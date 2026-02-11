@@ -2,6 +2,11 @@
 pragma solidity ^0.8.30;
 
 interface IVaultFactory {
+    /// @notice 初始化工厂（仅可调用一次）
+    /// @param beacon Vault Beacon 地址
+    /// @param initialOwner 工厂 owner 地址
+    function initialize(address beacon, address initialOwner) external;
+
     /// @notice 创建并初始化一个新的基金 Vault（仅工厂 owner 可调用）
     /// @param tokenName 份额代币名称
     /// @param tokenSymbol 份额代币符号

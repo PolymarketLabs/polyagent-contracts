@@ -4,6 +4,7 @@ pragma solidity ^0.8.30;
 import {Test} from "forge-std/Test.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {UpgradeableBeacon} from "@openzeppelin/contracts/proxy/beacon/UpgradeableBeacon.sol";
+import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {Vault} from "../../src/Vault.sol";
 import {VaultV2} from "../../src/VaultV2.sol";
 import {VaultFactory} from "../../src/VaultFactory.sol";
@@ -32,7 +33,9 @@ contract VaultUpgradeTest is Test {
         usdc = new USDC();
         Vault implementationV1 = new Vault();
         beacon = new UpgradeableBeacon(address(implementationV1), beaconOwner);
-        factory = new VaultFactory(address(beacon), factoryOwner);
+        VaultFactory factoryImplementation = new VaultFactory();
+        bytes memory initData = abi.encodeCall(VaultFactory.initialize, (address(beacon), factoryOwner));
+        factory = VaultFactory(address(new ERC1967Proxy(address(factoryImplementation), initData)));
 
         vm.prank(factoryOwner);
         address proxy = factory.createFund(
