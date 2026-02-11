@@ -8,12 +8,14 @@ import {VaultFactoryEvents} from "../src/factory/VaultFactoryEvents.sol";
 import {VaultFactoryErrors} from "../src/factory/VaultFactoryErrors.sol";
 import {USDC} from "./mocks/USDC.sol";
 import {UpgradeableBeacon} from "@openzeppelin/contracts/proxy/beacon/UpgradeableBeacon.sol";
+import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 contract VaultFactoryTest is Test, VaultFactoryEvents {
     uint256 public constant SECONDS_PER_EPOCH = 86400;
 
     USDC public usdc;
     VaultFactory public factory;
+    UpgradeableBeacon public beacon;
 
     address owner = makeAddr("owner");
     address beaconOwner = makeAddr("beaconOwner");
@@ -27,21 +29,33 @@ contract VaultFactoryTest is Test, VaultFactoryEvents {
         usdc = new USDC();
 
         Vault implementation = new Vault();
-        UpgradeableBeacon beacon = new UpgradeableBeacon(address(implementation), beaconOwner);
+        beacon = new UpgradeableBeacon(address(implementation), beaconOwner);
 
-        factory = new VaultFactory(address(beacon), owner);
+        factory = _deployFactoryProxy(address(beacon), owner);
     }
 
-    /// @notice 构造函数传入零地址 beacon 时应回滚
-    function test_constructor_reverts_whenBeaconIsZeroAddress() public {
+    /// @notice initialize 传入零地址 beacon 时应回滚
+    function test_initialize_reverts_whenBeaconIsZeroAddress() public {
+        VaultFactory implementation = new VaultFactory();
+        bytes memory initData = abi.encodeCall(VaultFactory.initialize, (address(0), owner));
+
         vm.expectRevert(VaultFactoryErrors.ZeroAddress.selector);
-        new VaultFactory(address(0), owner);
+        new ERC1967Proxy(address(implementation), initData);
     }
 
-    /// @notice 构造函数传入无效 beacon 地址时应回滚
-    function test_constructor_reverts_whenBeaconIsInvalid() public {
+    /// @notice initialize 传入无效 beacon 地址时应回滚
+    function test_initialize_reverts_whenBeaconIsInvalid() public {
+        VaultFactory implementation = new VaultFactory();
+        bytes memory initData = abi.encodeCall(VaultFactory.initialize, (address(this), owner));
+
         vm.expectRevert(VaultFactoryErrors.InvalidBeacon.selector);
-        new VaultFactory(address(this), owner);
+        new ERC1967Proxy(address(implementation), initData);
+    }
+
+    /// @notice 代理初始化后再次调用 initialize 应回滚
+    function test_initialize_cannotBeCalledTwice() public {
+        vm.expectRevert();
+        factory.initialize(address(beacon), owner);
     }
 
     /// @notice 验证工厂 owner 在构造后初始化正确
@@ -132,5 +146,11 @@ contract VaultFactoryTest is Test, VaultFactoryEvents {
         assertEq(factory.totalFunds(), 2);
         assertEq(factory.fundIds(vault1), 1);
         assertEq(factory.fundIds(vault2), 2);
+    }
+
+    function _deployFactoryProxy(address beaconAddress, address initialOwner) internal returns (VaultFactory) {
+        VaultFactory implementation = new VaultFactory();
+        bytes memory initData = abi.encodeCall(VaultFactory.initialize, (beaconAddress, initialOwner));
+        return VaultFactory(address(new ERC1967Proxy(address(implementation), initData)));
     }
 }

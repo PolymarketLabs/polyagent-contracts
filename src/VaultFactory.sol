@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity ^0.8.30;
 
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {BeaconProxy} from "@openzeppelin/contracts/proxy/beacon/BeaconProxy.sol";
 import {UpgradeableBeacon} from "@openzeppelin/contracts/proxy/beacon/UpgradeableBeacon.sol";
 import {IVault} from "./interfaces/IVault.sol";
@@ -10,26 +12,33 @@ import {Fund} from "./factory/VaultFactoryTypes.sol";
 import {VaultFactoryEvents} from "./factory/VaultFactoryEvents.sol";
 import {VaultFactoryErrors} from "./factory/VaultFactoryErrors.sol";
 
-contract VaultFactory is Ownable, IVaultFactory, VaultFactoryEvents, VaultFactoryErrors {
+contract VaultFactory is Initializable, OwnableUpgradeable, UUPSUpgradeable, IVaultFactory, VaultFactoryEvents, VaultFactoryErrors {
     // ===== 核心配置 =====
-    UpgradeableBeacon public immutable BEACON; // Beacon 合约地址（统一管理 Vault 实现）
+    UpgradeableBeacon public beacon; // Beacon 合约地址（统一管理 Vault 实现）
 
     // ===== 基金索引 =====
-    uint256 public nextFundId = 1; // 下一个可分配的基金 ID（从 1 开始）
+    uint256 public nextFundId; // 下一个可分配的基金 ID（从 1 开始）
     mapping(uint256 => Fund) public funds; // fundId => 基金元信息
     mapping(address => uint256) public fundIds; // vault 地址 => fundId
 
-    constructor(address beacon, address initialOwner) Ownable(initialOwner) {
-        if (beacon == address(0)) revert ZeroAddress();
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
 
+    function initialize(address _beacon, address initialOwner) external initializer {
+        __Ownable_init(initialOwner);
+
+        if (_beacon == address(0)) revert ZeroAddress();
         // 校验 beacon 地址有效：可读取 implementation 且实现地址非零。
-        try UpgradeableBeacon(beacon).implementation() returns (address implementation) {
+        try UpgradeableBeacon(_beacon).implementation() returns (address implementation) {
             if (implementation == address(0)) revert InvalidBeacon();
         } catch {
             revert InvalidBeacon();
         }
 
-        BEACON = UpgradeableBeacon(beacon);
+        beacon = UpgradeableBeacon(_beacon);
+        nextFundId = 1;
     }
 
     // ===== 基金创建 =====
@@ -48,7 +57,7 @@ contract VaultFactory is Ownable, IVaultFactory, VaultFactoryEvents, VaultFactor
             IVault.initialize, (tokenName, tokenSymbol, baseAsset, admin, operator, executor, secondsPerEpoch)
         );
 
-        vault = address(new BeaconProxy(address(BEACON), initData));
+        vault = address(new BeaconProxy(address(beacon), initData));
 
         uint256 fundId = nextFundId++;
         funds[fundId] = Fund({
@@ -69,4 +78,6 @@ contract VaultFactory is Ownable, IVaultFactory, VaultFactoryEvents, VaultFactor
     function totalFunds() external view override returns (uint256) {
         return nextFundId - 1;
     }
+
+    function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
 }

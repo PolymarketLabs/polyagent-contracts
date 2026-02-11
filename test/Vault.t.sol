@@ -6,6 +6,7 @@ import {Vault} from "../src/Vault.sol";
 import {VaultErrors} from "../src/vault/VaultErrors.sol";
 import {USDC} from "./mocks/USDC.sol";
 import {UpgradeableBeacon} from "@openzeppelin/contracts/proxy/beacon/UpgradeableBeacon.sol";
+import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {VaultFactory} from "../src/VaultFactory.sol";
 
 contract VaultTest is Test {
@@ -140,7 +141,9 @@ contract VaultTest is Test {
     function _deployFactory(address initialOwner) internal returns (VaultFactory localFactory) {
         Vault implementation = new Vault();
         UpgradeableBeacon beacon = new UpgradeableBeacon(address(implementation), beaconOwner);
-        localFactory = new VaultFactory(address(beacon), initialOwner);
+        VaultFactory factoryImplementation = new VaultFactory();
+        bytes memory initData = abi.encodeCall(VaultFactory.initialize, (address(beacon), initialOwner));
+        localFactory = VaultFactory(address(new ERC1967Proxy(address(factoryImplementation), initData)));
     }
 
     function _createFund(
