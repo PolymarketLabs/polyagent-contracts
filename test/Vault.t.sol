@@ -183,6 +183,31 @@ contract VaultTest is Test {
         assertEq(vault.referrerOf(alice), bob);
     }
 
+    /// @notice 赎回请求应记录为 Pending，并将份额锁定到 Vault
+    function test_requestRedeem_recordsPendingAndLocksShares() public {
+        uint256 shares = 10e18;
+        deal(address(vault), alice, shares, true);
+
+        vm.prank(alice);
+        (uint256 epoch, uint256 index) = vault.requestRedeem(shares);
+
+        (address investor, uint256 recordedShares, ReqStatus status, uint256 recordedEpoch) =
+            vault.redeemRequests(epoch, index);
+        assertEq(investor, alice);
+        assertEq(recordedShares, shares);
+        assertEq(uint8(status), uint8(ReqStatus.Pending));
+        assertEq(recordedEpoch, epoch);
+        assertEq(vault.balanceOf(alice), 0);
+        assertEq(vault.balanceOf(address(vault)), shares);
+    }
+
+    /// @notice 赎回份额低于最小值时应回滚
+    function test_requestRedeem_reverts_whenSharesBelowMinRedeem() public {
+        vm.prank(alice);
+        vm.expectRevert(VaultErrors.AmountTooSmall.selector);
+        vault.requestRedeem(0);
+    }
+
     function _deployFactory(address initialOwner) internal returns (VaultFactory localFactory) {
         Vault implementation = new Vault();
         UpgradeableBeacon beacon = new UpgradeableBeacon(address(implementation), beaconOwner);
@@ -208,9 +233,7 @@ contract VaultTest is Test {
 
     // TODO(vault): 待业务函数实现后补充以下测试（函数名预留 + 中文说明）
     // function test_requestDeposit_reverts_whenDepositPaused() public {} // 申购暂停时应回滚
-    // function test_requestRedeem_recordsPendingAndLocksShares() public {} // 赎回请求应记录为 Pending 且锁定份额
     // function test_requestRedeem_reverts_whenRedeemPaused() public {} // 赎回暂停时应回滚
-    // function test_requestRedeem_reverts_whenSharesBelowMinRedeem() public {} // 赎回份额低于最小值时应回滚
     // function test_cancelDeposit_reverts_whenNotRequestOwner() public {} // 非请求所有者撤销申购应回滚
     // function test_cancelDeposit_reverts_whenEpochAlreadyFinalized() public {} // 已封账 epoch 的申购撤销应回滚
     // function test_cancelDeposit_returnsBaseAssetAndMarksCanceled() public {} // 撤销申购后应退款并标记 Canceled

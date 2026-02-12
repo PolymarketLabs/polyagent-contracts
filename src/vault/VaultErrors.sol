@@ -8,8 +8,8 @@ abstract contract VaultErrors {
     error AmountTooSmall();
     error DepositPaused();
     error DepositNotPaused();
-    error EnforcedRedeemPause();
-    error ExpectedRedeemPause();
+    error RedeemPaused();
+    error RedeemNotPaused();
     error InvalidBps();
     error InvalidSplit();
     error ReferrerAlreadyBound();

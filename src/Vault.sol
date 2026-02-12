@@ -126,7 +126,29 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, IVault, VaultEvent
         emit DepositRequested(epoch, index, msg.sender, amount);
     }
 
-    function requestRedeem(uint256 shares) external override returns (uint256 epoch, uint256 index) {}
+    function requestRedeem(uint256 shares) external override returns (uint256 epoch, uint256 index) {
+        // 暂停期间禁止提交赎回请求
+        if (redeemPaused) {
+            revert RedeemPaused();
+        }
+        // 仅接受不低于最小赎回门槛的份额
+        if (shares < minRedeemShares) {
+            revert AmountTooSmall();
+        }
+
+        // 先锁定份额，再记录请求，避免出现“有请求无份额”
+        _transfer(msg.sender, address(this), shares);
+
+        epoch = _currentEpoch();
+        index = redeemRequests[epoch].length;
+
+        // 请求入队，后续由结算流程统一处理
+        redeemRequests[epoch].push(
+            RedeemRequest({investor: msg.sender, shares: shares, status: ReqStatus.Pending, epoch: epoch})
+        );
+
+        emit RedeemRequested(epoch, index, msg.sender, shares);
+    }
 
     function cancelDeposit(uint256 epoch, uint256 index) external override {}
 
