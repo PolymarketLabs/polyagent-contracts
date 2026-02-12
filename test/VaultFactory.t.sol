@@ -63,6 +63,11 @@ contract VaultFactoryTest is Test, VaultFactoryEvents {
         assertEq(factory.owner(), owner);
     }
 
+    /// @notice 验证工厂初始化版本号为 1
+    function test_initializedVersion_isOneAfterInitialize() public view {
+        assertEq(factory.initializedVersion(), 1);
+    }
+
     /// @notice 非 owner 调用 createFund 时应回滚
     function test_createFund_reverts_whenCallerIsNotOwner() public {
         vm.prank(outsider);

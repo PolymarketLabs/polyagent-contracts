@@ -86,5 +86,9 @@ contract VaultFactory is
         return nextFundId - 1;
     }
 
+    function initializedVersion() external view override returns (uint64) {
+        return _getInitializedVersion();
+    }
+
     function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
 }

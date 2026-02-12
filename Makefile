@@ -1,5 +1,9 @@
 .DEFAULT_GOAL := help
-.PHONY: help test build fmt-check fmt anvil deploy-local deploy-sepolia deploy-mainnet upgrade-local upgrade-sepolia upgrade-mainnet
+.PHONY: help test build fmt-check fmt anvil \
+	deploy-vault-local deploy-vault-sepolia deploy-vault-mainnet \
+	deploy-factory-local deploy-factory-sepolia deploy-factory-mainnet \
+	upgrade-vault-local upgrade-vault-sepolia upgrade-vault-mainnet \
+	upgrade-factory-local upgrade-factory-sepolia upgrade-factory-mainnet
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*##"} \
@@ -22,36 +26,70 @@ fmt: ## Format code
 anvil: ## Start local anvil
 	anvil
 
-deploy-local: ## Deploy beacon + factory to local anvil
-	forge script script/DeployVault.s.sol:DeployBeaconScript \
+deploy-vault-local: ## Deploy Vault beacon to local anvil
+	forge script script/DeployVault.s.sol:DeployVaultScript \
 		--rpc-url local \
 		--broadcast -vvvv
 
-deploy-sepolia: ## Deploy beacon + factory to Sepolia
-	forge script script/DeployVault.s.sol:DeployBeaconScript \
+deploy-vault-sepolia: ## Deploy Vault beacon to Sepolia
+	forge script script/DeployVault.s.sol:DeployVaultScript \
 		--rpc-url sepolia \
 		--broadcast \
 		--verify -vvvv
 
-deploy-mainnet: ## Deploy beacon + factory to Mainnet
-	forge script script/DeployVault.s.sol:DeployBeaconScript \
+deploy-vault-mainnet: ## Deploy Vault beacon to Mainnet
+	forge script script/DeployVault.s.sol:DeployVaultScript \
 		--rpc-url mainnet \
 		--broadcast \
 		--verify -vvvv
 
-upgrade-local: ## Upgrade beacon implementation to VaultV2 on local anvil (requires BEACON)
-	forge script script/UpgradeVault.s.sol:UpgradeBeaconScript \
+deploy-factory-local: ## Deploy VaultFactory proxy to local anvil (requires BEACON)
+	forge script script/DeployVaultFactory.s.sol:DeployVaultFactoryScript \
 		--rpc-url local \
 		--broadcast -vvvv
 
-upgrade-sepolia: ## Upgrade beacon implementation to VaultV2 on Sepolia (requires BEACON)
-	forge script script/UpgradeVault.s.sol:UpgradeBeaconScript \
+deploy-factory-sepolia: ## Deploy VaultFactory proxy to Sepolia (requires BEACON)
+	forge script script/DeployVaultFactory.s.sol:DeployVaultFactoryScript \
 		--rpc-url sepolia \
 		--broadcast \
 		--verify -vvvv
 
-upgrade-mainnet: ## Upgrade beacon implementation to VaultV2 on Mainnet (requires BEACON)
-	forge script script/UpgradeVault.s.sol:UpgradeBeaconScript \
+deploy-factory-mainnet: ## Deploy VaultFactory proxy to Mainnet (requires BEACON)
+	forge script script/DeployVaultFactory.s.sol:DeployVaultFactoryScript \
+		--rpc-url mainnet \
+		--broadcast \
+		--verify -vvvv
+
+upgrade-vault-local: ## Upgrade beacon implementation to VaultV2 on local anvil (requires BEACON)
+	forge script script/UpgradeVault.s.sol:UpgradeVaultScript \
+		--rpc-url local \
+		--broadcast -vvvv
+
+upgrade-vault-sepolia: ## Upgrade beacon implementation to VaultV2 on Sepolia (requires BEACON)
+	forge script script/UpgradeVault.s.sol:UpgradeVaultScript \
+		--rpc-url sepolia \
+		--broadcast \
+		--verify -vvvv
+
+upgrade-vault-mainnet: ## Upgrade beacon implementation to VaultV2 on Mainnet (requires BEACON)
+	forge script script/UpgradeVault.s.sol:UpgradeVaultScript \
+		--rpc-url mainnet \
+		--broadcast \
+		--verify -vvvv
+
+upgrade-factory-local: ## Upgrade VaultFactory proxy implementation to VaultFactoryV2 on local anvil (requires FACTORY_PROXY)
+	forge script script/UpgradeVaultFactory.s.sol:UpgradeVaultFactoryScript \
+		--rpc-url local \
+		--broadcast -vvvv
+
+upgrade-factory-sepolia: ## Upgrade VaultFactory proxy implementation to VaultFactoryV2 on Sepolia (requires FACTORY_PROXY)
+	forge script script/UpgradeVaultFactory.s.sol:UpgradeVaultFactoryScript \
+		--rpc-url sepolia \
+		--broadcast \
+		--verify -vvvv
+
+upgrade-factory-mainnet: ## Upgrade VaultFactory proxy implementation to VaultFactoryV2 on Mainnet (requires FACTORY_PROXY)
+	forge script script/UpgradeVaultFactory.s.sol:UpgradeVaultFactoryScript \
 		--rpc-url mainnet \
 		--broadcast \
 		--verify -vvvv

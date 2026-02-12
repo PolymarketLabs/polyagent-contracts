@@ -30,4 +30,7 @@ interface IVaultFactory {
 
     /// @notice 返回已创建基金总数
     function totalFunds() external view returns (uint256);
+
+    /// @notice 返回初始化版本号（initializer/reinitializer）
+    function initializedVersion() external view returns (uint64);
 }
