@@ -3,10 +3,13 @@ pragma solidity ^0.8.30;
 
 import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import {ERC20Upgradeable} from "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IVault} from "./interfaces/IVault.sol";
 import {
     DepositRequest,
     RedeemRequest,
+    ReqStatus,
     EpochSnapshot,
     SettlementCursor,
     FeePolicy,
@@ -16,6 +19,8 @@ import {VaultEvents} from "./vault/VaultEvents.sol";
 import {VaultErrors} from "./vault/VaultErrors.sol";
 
 contract Vault is ERC20Upgradeable, AccessControlUpgradeable, IVault, VaultEvents, VaultErrors {
+    using SafeERC20 for IERC20;
+
     // ===== 角色常量 =====
     bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
 
@@ -95,7 +100,30 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, IVault, VaultEvent
     // ===== 用户操作 =====
 
     function requestDeposit(uint256 amount, address referrer) external override returns (uint256 epoch, uint256 index) {
+        // 暂停期间禁止提交申购请求
+        if (depositPaused) {
+            revert DepositPaused();
+        }
+        // 仅接受不低于最小申购门槛的金额
+        if (amount < minDepositAmount) {
+            revert AmountTooSmall();
+        }
+
+        // 推荐人仅在未绑定时写入
         _bindReferrerIfUnbound(msg.sender, referrer);
+
+        // 先收取基础资产，再记录请求，避免出现“有请求无资产”
+        IERC20(baseAsset).safeTransferFrom(msg.sender, address(this), amount);
+
+        epoch = _currentEpoch();
+        index = depositRequests[epoch].length;
+
+        // 请求入队，后续由结算流程统一处理
+        depositRequests[epoch].push(
+            DepositRequest({investor: msg.sender, amount: amount, status: ReqStatus.Pending, epoch: epoch})
+        );
+
+        emit DepositRequested(epoch, index, msg.sender, amount);
     }
 
     function requestRedeem(uint256 shares) external override returns (uint256 epoch, uint256 index) {}

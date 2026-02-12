@@ -4,6 +4,7 @@ pragma solidity ^0.8.30;
 import {Test} from "forge-std/Test.sol";
 import {Vault} from "../src/Vault.sol";
 import {VaultErrors} from "../src/vault/VaultErrors.sol";
+import {ReqStatus} from "../src/vault/VaultTypes.sol";
 import {USDC} from "./mocks/USDC.sol";
 import {UpgradeableBeacon} from "@openzeppelin/contracts/proxy/beacon/UpgradeableBeacon.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
@@ -138,6 +139,50 @@ contract VaultTest is Test {
         assertEq(vault.referrerOf(bob), address(0));
     }
 
+    /// @notice 申购请求应记录为 Pending、完成资产转入，并在未绑定时写入推荐人
+    function test_requestDeposit_recordsPendingAndTransfersBaseAsset() public {
+        uint256 amount = 100e6;
+        vm.prank(address(this));
+        usdc.transfer(alice, amount);
+
+        vm.prank(alice);
+        usdc.approve(address(vault), amount);
+
+        vm.prank(alice);
+        (uint256 epoch, uint256 index) = vault.requestDeposit(amount, bob);
+
+        (address investor, uint256 recordedAmount, ReqStatus status, uint256 recordedEpoch) =
+            vault.depositRequests(epoch, index);
+        assertEq(investor, alice);
+        assertEq(recordedAmount, amount);
+        assertEq(uint8(status), uint8(ReqStatus.Pending));
+        assertEq(recordedEpoch, epoch);
+        assertEq(usdc.balanceOf(address(vault)), amount);
+        assertEq(vault.referrerOf(alice), bob);
+    }
+
+    /// @notice 申购金额低于最小值时应回滚
+    function test_requestDeposit_reverts_whenAmountBelowMinDeposit() public {
+        vm.prank(alice);
+        vm.expectRevert(VaultErrors.AmountTooSmall.selector);
+        vault.requestDeposit(0, address(0));
+    }
+
+    /// @notice 推荐人仅首次绑定生效，后续 requestDeposit 传参不应覆盖
+    function test_requestDeposit_referrerOnlyBindsWhenUnbound() public {
+        uint256 amount = 100e6;
+        vm.prank(address(this));
+        usdc.transfer(alice, amount * 2);
+
+        vm.startPrank(alice);
+        usdc.approve(address(vault), amount * 2);
+        vault.requestDeposit(amount, bob);
+        vault.requestDeposit(amount, manager);
+        vm.stopPrank();
+
+        assertEq(vault.referrerOf(alice), bob);
+    }
+
     function _deployFactory(address initialOwner) internal returns (VaultFactory localFactory) {
         Vault implementation = new Vault();
         UpgradeableBeacon beacon = new UpgradeableBeacon(address(implementation), beaconOwner);
@@ -162,9 +207,7 @@ contract VaultTest is Test {
     }
 
     // TODO(vault): 待业务函数实现后补充以下测试（函数名预留 + 中文说明）
-    // function test_requestDeposit_recordsPendingAndTransfersBaseAsset() public {} // 申购请求应记录为 Pending 且完成基础资产转入
     // function test_requestDeposit_reverts_whenDepositPaused() public {} // 申购暂停时应回滚
-    // function test_requestDeposit_reverts_whenAmountBelowMinDeposit() public {} // 申购金额低于最小值时应回滚
     // function test_requestRedeem_recordsPendingAndLocksShares() public {} // 赎回请求应记录为 Pending 且锁定份额
     // function test_requestRedeem_reverts_whenRedeemPaused() public {} // 赎回暂停时应回滚
     // function test_requestRedeem_reverts_whenSharesBelowMinRedeem() public {} // 赎回份额低于最小值时应回滚
