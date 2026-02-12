@@ -12,7 +12,14 @@ import {Fund} from "./factory/VaultFactoryTypes.sol";
 import {VaultFactoryEvents} from "./factory/VaultFactoryEvents.sol";
 import {VaultFactoryErrors} from "./factory/VaultFactoryErrors.sol";
 
-contract VaultFactory is Initializable, OwnableUpgradeable, UUPSUpgradeable, IVaultFactory, VaultFactoryEvents, VaultFactoryErrors {
+contract VaultFactory is
+    Initializable,
+    OwnableUpgradeable,
+    UUPSUpgradeable,
+    IVaultFactory,
+    VaultFactoryEvents,
+    VaultFactoryErrors
+{
     // ===== 核心配置 =====
     UpgradeableBeacon public beacon; // Beacon 合约地址（统一管理 Vault 实现）
 
