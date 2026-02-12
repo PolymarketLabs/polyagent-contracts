@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {Vault} from "../src/Vault.sol";
 import {VaultErrors} from "../src/vault/VaultErrors.sol";
 import {ReqStatus} from "../src/vault/VaultTypes.sol";
+import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
 import {USDC} from "./mocks/USDC.sol";
 import {UpgradeableBeacon} from "@openzeppelin/contracts/proxy/beacon/UpgradeableBeacon.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
@@ -181,6 +182,20 @@ contract VaultTest is Test {
         vm.stopPrank();
 
         assertEq(vault.referrerOf(alice), bob);
+    }
+
+    /// @notice 申购时余额不足应回滚，且本次请求产生的状态变更应一并回滚
+    function test_requestDeposit_reverts_whenInsufficientBalance() public {
+        uint256 amount = 100e6;
+
+        vm.prank(alice);
+        usdc.approve(address(vault), amount);
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(IERC20Errors.ERC20InsufficientBalance.selector, alice, 0, amount));
+        vault.requestDeposit(amount, bob);
+
+        assertEq(vault.referrerOf(alice), address(0));
     }
 
     /// @notice 赎回请求应记录为 Pending，并将份额锁定到 Vault
