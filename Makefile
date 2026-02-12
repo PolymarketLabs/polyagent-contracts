@@ -1,5 +1,8 @@
 .DEFAULT_GOAL := help
-.PHONY: help test build fmt-check fmt anvil deploy-local deploy-sepolia deploy-mainnet upgrade-local upgrade-sepolia upgrade-mainnet
+.PHONY: help test build fmt-check fmt anvil \
+	deploy-vault-local deploy-vault-sepolia deploy-vault-mainnet \
+	deploy-factory-local deploy-factory-sepolia deploy-factory-mainnet \
+	upgrade-local upgrade-sepolia upgrade-mainnet
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*##"} \
@@ -22,19 +25,36 @@ fmt: ## Format code
 anvil: ## Start local anvil
 	anvil
 
-deploy-local: ## Deploy beacon + factory to local anvil
-	forge script script/DeployVault.s.sol:DeployBeaconScript \
+deploy-vault-local: ## Deploy Vault beacon to local anvil
+	forge script script/DeployVault.s.sol:DeployVaultScript \
 		--rpc-url local \
 		--broadcast -vvvv
 
-deploy-sepolia: ## Deploy beacon + factory to Sepolia
-	forge script script/DeployVault.s.sol:DeployBeaconScript \
+deploy-vault-sepolia: ## Deploy Vault beacon to Sepolia
+	forge script script/DeployVault.s.sol:DeployVaultScript \
 		--rpc-url sepolia \
 		--broadcast \
 		--verify -vvvv
 
-deploy-mainnet: ## Deploy beacon + factory to Mainnet
-	forge script script/DeployVault.s.sol:DeployBeaconScript \
+deploy-vault-mainnet: ## Deploy Vault beacon to Mainnet
+	forge script script/DeployVault.s.sol:DeployVaultScript \
+		--rpc-url mainnet \
+		--broadcast \
+		--verify -vvvv
+
+deploy-factory-local: ## Deploy VaultFactory proxy to local anvil (requires BEACON)
+	forge script script/DeployVaultFactory.s.sol:DeployVaultFactoryScript \
+		--rpc-url local \
+		--broadcast -vvvv
+
+deploy-factory-sepolia: ## Deploy VaultFactory proxy to Sepolia (requires BEACON)
+	forge script script/DeployVaultFactory.s.sol:DeployVaultFactoryScript \
+		--rpc-url sepolia \
+		--broadcast \
+		--verify -vvvv
+
+deploy-factory-mainnet: ## Deploy VaultFactory proxy to Mainnet (requires BEACON)
+	forge script script/DeployVaultFactory.s.sol:DeployVaultFactoryScript \
 		--rpc-url mainnet \
 		--broadcast \
 		--verify -vvvv
