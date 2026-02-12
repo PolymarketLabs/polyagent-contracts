@@ -2,7 +2,8 @@
 .PHONY: help test build fmt-check fmt anvil \
 	deploy-vault-local deploy-vault-sepolia deploy-vault-mainnet \
 	deploy-factory-local deploy-factory-sepolia deploy-factory-mainnet \
-	upgrade-local upgrade-sepolia upgrade-mainnet
+	upgrade-local upgrade-sepolia upgrade-mainnet \
+	upgrade-factory-local upgrade-factory-sepolia upgrade-factory-mainnet
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*##"} \
@@ -72,6 +73,23 @@ upgrade-sepolia: ## Upgrade beacon implementation to VaultV2 on Sepolia (require
 
 upgrade-mainnet: ## Upgrade beacon implementation to VaultV2 on Mainnet (requires BEACON)
 	forge script script/UpgradeVault.s.sol:UpgradeVaultScript \
+		--rpc-url mainnet \
+		--broadcast \
+		--verify -vvvv
+
+upgrade-factory-local: ## Upgrade VaultFactory proxy implementation to VaultFactoryV2 on local anvil (requires FACTORY_PROXY)
+	forge script script/UpgradeVaultFactory.s.sol:UpgradeVaultFactoryScript \
+		--rpc-url local \
+		--broadcast -vvvv
+
+upgrade-factory-sepolia: ## Upgrade VaultFactory proxy implementation to VaultFactoryV2 on Sepolia (requires FACTORY_PROXY)
+	forge script script/UpgradeVaultFactory.s.sol:UpgradeVaultFactoryScript \
+		--rpc-url sepolia \
+		--broadcast \
+		--verify -vvvv
+
+upgrade-factory-mainnet: ## Upgrade VaultFactory proxy implementation to VaultFactoryV2 on Mainnet (requires FACTORY_PROXY)
+	forge script script/UpgradeVaultFactory.s.sol:UpgradeVaultFactoryScript \
 		--rpc-url mainnet \
 		--broadcast \
 		--verify -vvvv
