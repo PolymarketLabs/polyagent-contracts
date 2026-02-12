@@ -3,10 +3,14 @@ pragma solidity ^0.8.30;
 
 import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import {ERC20Upgradeable} from "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IVault} from "./interfaces/IVault.sol";
 import {
     DepositRequest,
     RedeemRequest,
+    ReqStatus,
     EpochSnapshot,
     SettlementCursor,
     FeePolicy,
@@ -15,7 +19,9 @@ import {
 import {VaultEvents} from "./vault/VaultEvents.sol";
 import {VaultErrors} from "./vault/VaultErrors.sol";
 
-contract Vault is ERC20Upgradeable, AccessControlUpgradeable, IVault, VaultEvents, VaultErrors {
+contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, IVault, VaultEvents, VaultErrors {
+    using SafeERC20 for IERC20;
+
     // ===== 角色常量 =====
     bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
 
@@ -94,17 +100,124 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, IVault, VaultEvent
 
     // ===== 用户操作 =====
 
-    function requestDeposit(uint256 amount, address referrer) external override returns (uint256 epoch, uint256 index) {
+    function requestDeposit(uint256 amount, address referrer)
+        external
+        override
+        nonReentrant
+        returns (uint256 epoch, uint256 index)
+    {
+        // 暂停期间禁止提交申购请求
+        if (depositPaused) {
+            revert DepositPaused();
+        }
+        // 仅接受不低于最小申购门槛的金额
+        if (amount < minDepositAmount) {
+            revert AmountTooSmall();
+        }
+
+        // 推荐人仅在未绑定时写入
         _bindReferrerIfUnbound(msg.sender, referrer);
+
+        epoch = _currentEpoch();
+        index = depositRequests[epoch].length;
+
+        // 按严格 CEI：先写入状态，再进行外部交互
+        depositRequests[epoch].push(
+            DepositRequest({investor: msg.sender, amount: amount, status: ReqStatus.Pending, epoch: epoch})
+        );
+
+        // 外部交互放在最后；若转账失败，整笔交易回滚，已写状态不会保留
+        IERC20(baseAsset).safeTransferFrom(msg.sender, address(this), amount);
+
+        emit DepositRequested(epoch, index, msg.sender, amount);
     }
 
-    function requestRedeem(uint256 shares) external override returns (uint256 epoch, uint256 index) {}
+    function requestRedeem(uint256 shares) external override nonReentrant returns (uint256 epoch, uint256 index) {
+        // 暂停期间禁止提交赎回请求
+        if (redeemPaused) {
+            revert RedeemPaused();
+        }
+        // 仅接受不低于最小赎回门槛的份额
+        if (shares < minRedeemShares) {
+            revert AmountTooSmall();
+        }
 
-    function cancelDeposit(uint256 epoch, uint256 index) external override {}
+        // 先锁定份额，再记录请求，避免出现“有请求无份额”
+        _transfer(msg.sender, address(this), shares);
 
-    function cancelRedeem(uint256 epoch, uint256 index) external override {}
+        epoch = _currentEpoch();
+        index = redeemRequests[epoch].length;
 
-    function claim(address to) external override returns (uint256 amount) {}
+        // 请求入队，后续由结算流程统一处理
+        redeemRequests[epoch].push(
+            RedeemRequest({investor: msg.sender, shares: shares, status: ReqStatus.Pending, epoch: epoch})
+        );
+
+        emit RedeemRequested(epoch, index, msg.sender, shares);
+    }
+
+    function cancelDeposit(uint256 epoch, uint256 index) external override nonReentrant {
+        // 已封账 epoch 的请求不可撤销，避免破坏结算口径
+        if (snapshots[epoch].finalizedAt != 0) {
+            revert EpochAlreadyFinalized();
+        }
+
+        DepositRequest storage req = depositRequests[epoch][index];
+        // 仅请求发起人可撤销
+        if (req.investor != msg.sender) {
+            revert NotRequestOwner();
+        }
+        // 仅 Pending 请求可撤销，已结算/已撤销请求禁止重复操作
+        if (req.status != ReqStatus.Pending) {
+            revert InvalidRequestStatus();
+        }
+
+        // 先更新状态再退款，遵循 CEI
+        req.status = ReqStatus.Canceled;
+        IERC20(baseAsset).safeTransfer(msg.sender, req.amount);
+
+        emit DepositCanceled(epoch, index, msg.sender, req.amount);
+    }
+
+    function cancelRedeem(uint256 epoch, uint256 index) external override nonReentrant {
+        // 已封账 epoch 的请求不可撤销，避免破坏结算口径
+        if (snapshots[epoch].finalizedAt != 0) {
+            revert EpochAlreadyFinalized();
+        }
+
+        RedeemRequest storage req = redeemRequests[epoch][index];
+        // 仅请求发起人可撤销
+        if (req.investor != msg.sender) {
+            revert NotRequestOwner();
+        }
+        // 仅 Pending 请求可撤销，已结算/已撤销请求禁止重复操作
+        if (req.status != ReqStatus.Pending) {
+            revert InvalidRequestStatus();
+        }
+
+        // 先更新状态再解锁份额
+        req.status = ReqStatus.Canceled;
+        _transfer(address(this), msg.sender, req.shares);
+
+        emit RedeemCanceled(epoch, index, msg.sender, req.shares);
+    }
+
+    function claim(address to) external override nonReentrant returns (uint256 amount) {
+        if (to == address(0)) {
+            revert ZeroAddress();
+        }
+
+        amount = claimableAssets[msg.sender];
+        if (amount == 0) {
+            revert NoClaimableAssets();
+        }
+
+        // 先清零可领取余额，再执行转账，遵循 CEI
+        claimableAssets[msg.sender] = 0;
+        IERC20(baseAsset).safeTransfer(to, amount);
+
+        emit Claimed(msg.sender, to, amount);
+    }
 
     // ===== 运营操作 =====
 
@@ -145,7 +258,7 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, IVault, VaultEvent
         _bindReferrerIfUnbound(msg.sender, referrer);
     }
 
-    function claimFee(address to) external override returns (uint256 amount) {}
+    function claimFee(address to) external override nonReentrant returns (uint256 amount) {}
 
     // ===== 只读查询 =====
 
