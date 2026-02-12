@@ -21,6 +21,8 @@ abstract contract VaultErrors {
     error ReferrerAlreadyBound();
     error SelfReferral();
     error CircularReferral();
+    /// @notice 无可领取资产
+    error NoClaimableAssets();
     error NoClaimableFee();
     error InvalidEffectiveEpoch();
     error FeePolicyNotFound();

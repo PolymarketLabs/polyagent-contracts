@@ -202,7 +202,22 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, I
         emit RedeemCanceled(epoch, index, msg.sender, req.shares);
     }
 
-    function claim(address to) external override nonReentrant returns (uint256 amount) {}
+    function claim(address to) external override nonReentrant returns (uint256 amount) {
+        if (to == address(0)) {
+            revert ZeroAddress();
+        }
+
+        amount = claimableAssets[msg.sender];
+        if (amount == 0) {
+            revert NoClaimableAssets();
+        }
+
+        // 先清零可领取余额，再执行转账，遵循 CEI
+        claimableAssets[msg.sender] = 0;
+        IERC20(baseAsset).safeTransfer(to, amount);
+
+        emit Claimed(msg.sender, to, amount);
+    }
 
     // ===== 运营操作 =====
 

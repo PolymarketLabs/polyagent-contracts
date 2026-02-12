@@ -15,6 +15,7 @@ contract VaultTest is Test {
     uint256 public constant INITIAL_TIMESTAMP = 1767225600; // 2026-01-01 00:00:00 UTC
     uint256 public constant SECONDS_PER_EPOCH = 86400;
     uint256 internal constant SNAPSHOTS_MAPPING_SLOT = 11; // Vault.snapshots 的映射槽位（需与 Vault 存储布局保持一致）
+    uint256 internal constant CLAIMABLE_ASSETS_MAPPING_SLOT = 8; // Vault.claimableAssets 的映射槽位（需与 Vault 存储布局保持一致）
 
     USDC public usdc;
     VaultFactory public factory;
@@ -28,6 +29,8 @@ contract VaultTest is Test {
     address executor = makeAddr("executor");
     address alice = makeAddr("alice");
     address bob = makeAddr("bob");
+
+    event Claimed(address indexed investor, address indexed to, uint256 amount);
 
     function setUp() public {
         vm.warp(INITIAL_TIMESTAMP);
@@ -334,6 +337,59 @@ contract VaultTest is Test {
         vault.cancelRedeem(epoch, index);
     }
 
+    /// @notice claim 应转出可领取资产并触发 Claimed
+    function test_claim_transfersClaimableAssetsAndEmitsClaimed() public {
+        uint256 amount = 100e6;
+        vm.prank(address(this));
+        usdc.transfer(address(vault), amount);
+        _setClaimableAsset(alice, amount);
+
+        vm.prank(alice);
+        vm.expectEmit(true, true, true, true);
+        emit Claimed(alice, bob, amount);
+        uint256 claimedAmount = vault.claim(bob);
+
+        assertEq(claimedAmount, amount);
+        assertEq(vault.claimableAssets(alice), 0);
+        assertEq(usdc.balanceOf(bob), amount);
+    }
+
+    /// @notice claim 在无可领取资产时应回滚
+    function test_claim_reverts_whenNoClaimableAssets() public {
+        vm.prank(alice);
+        vm.expectRevert(VaultErrors.NoClaimableAssets.selector);
+        vault.claim(bob);
+    }
+
+    /// @notice claim 的收款地址为零地址时应回滚
+    function test_claim_reverts_whenToIsZeroAddress() public {
+        _setClaimableAsset(alice, 1);
+        vm.prank(alice);
+        vm.expectRevert(VaultErrors.ZeroAddress.selector);
+        vault.claim(address(0));
+    }
+
+    /// @notice 当 Vault 持有的 baseAsset 不足以覆盖可领取金额时，claim 应回滚
+    function test_claim_reverts_whenVaultBaseAssetInsufficient() public {
+        uint256 claimableAmount = 100e6;
+        uint256 vaultBalance = 50e6;
+        vm.prank(address(this));
+        usdc.transfer(address(vault), vaultBalance);
+        _setClaimableAsset(alice, claimableAmount);
+
+        vm.prank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IERC20Errors.ERC20InsufficientBalance.selector, address(vault), vaultBalance, claimableAmount
+            )
+        );
+        vault.claim(bob);
+
+        // 转账失败应导致整笔交易回滚，claimable 余额不应被清零
+        assertEq(vault.claimableAssets(alice), claimableAmount);
+        assertEq(usdc.balanceOf(bob), 0);
+    }
+
     function _deployFactory(address initialOwner) internal returns (VaultFactory localFactory) {
         Vault implementation = new Vault();
         UpgradeableBeacon beacon = new UpgradeableBeacon(address(implementation), beaconOwner);
@@ -357,6 +413,11 @@ contract VaultTest is Test {
         );
     }
 
+    function _setClaimableAsset(address investor, uint256 amount) internal {
+        bytes32 slot = keccak256(abi.encode(investor, CLAIMABLE_ASSETS_MAPPING_SLOT));
+        vm.store(address(vault), slot, bytes32(amount));
+    }
+
     // TODO(vault): 待业务函数实现后补充以下测试（函数名预留 + 中文说明）
     // function test_requestDeposit_reverts_whenDepositPaused() public {} // 申购暂停时应回滚
     // function test_requestRedeem_reverts_whenRedeemPaused() public {} // 赎回暂停时应回滚
@@ -366,7 +427,6 @@ contract VaultTest is Test {
     // function test_finalizeEpoch_storesSnapshotAndEmitsEvent() public {} // 封账应写入快照并触发事件
     // function test_settleDeposits_processesBatchAndUpdatesCursor() public {} // 申购批结算应推进游标并更新状态
     // function test_settleRedeems_processesBatchAndUpdatesCursor() public {} // 赎回批结算应推进游标并更新状态
-    // function test_claim_transfersClaimableAssetsAndEmitsClaimed() public {} // claim 应转出可领取资产并触发 Claimed
     // function test_transferToExecutor_reverts_whenCalledByNonOperator() public {} // 非 operator 划转执行钱包应回滚
     // function test_transferToExecutor_transfersBaseAssetToExecutor() public {} // operator 划转执行钱包应成功转账
     // function test_pauseDeposit_onlyAdminCanToggle() public {} // 仅 admin 可切换申购暂停状态
