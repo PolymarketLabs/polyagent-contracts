@@ -60,18 +60,18 @@ deploy-factory-mainnet: ## Deploy VaultFactory proxy to Mainnet (requires BEACON
 		--verify -vvvv
 
 upgrade-local: ## Upgrade beacon implementation to VaultV2 on local anvil (requires BEACON)
-	forge script script/UpgradeVault.s.sol:UpgradeBeaconScript \
+	forge script script/UpgradeVault.s.sol:UpgradeVaultScript \
 		--rpc-url local \
 		--broadcast -vvvv
 
 upgrade-sepolia: ## Upgrade beacon implementation to VaultV2 on Sepolia (requires BEACON)
-	forge script script/UpgradeVault.s.sol:UpgradeBeaconScript \
+	forge script script/UpgradeVault.s.sol:UpgradeVaultScript \
 		--rpc-url sepolia \
 		--broadcast \
 		--verify -vvvv
 
 upgrade-mainnet: ## Upgrade beacon implementation to VaultV2 on Mainnet (requires BEACON)
-	forge script script/UpgradeVault.s.sol:UpgradeBeaconScript \
+	forge script script/UpgradeVault.s.sol:UpgradeVaultScript \
 		--rpc-url mainnet \
 		--broadcast \
 		--verify -vvvv

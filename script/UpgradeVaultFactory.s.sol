@@ -6,7 +6,7 @@ import {console2} from "forge-std/console2.sol";
 import {VaultFactory} from "../src/VaultFactory.sol";
 import {VaultFactoryV2} from "../src/VaultFactoryV2.sol";
 
-contract UpgradeFactoryScript is Script {
+contract UpgradeVaultFactoryScript is Script {
     uint256 pk = vm.envUint("PRIVATE_KEY");
     address factoryProxy = vm.envAddress("FACTORY_PROXY");
 

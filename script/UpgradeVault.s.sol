@@ -6,7 +6,7 @@ import {console2} from "forge-std/console2.sol";
 import {UpgradeableBeacon} from "@openzeppelin/contracts/proxy/beacon/UpgradeableBeacon.sol";
 import {VaultV2} from "../src/VaultV2.sol";
 
-contract UpgradeBeaconScript is Script {
+contract UpgradeVaultScript is Script {
     uint256 pk = vm.envUint("PRIVATE_KEY");
     address beaconAddress = vm.envAddress("BEACON");
 
