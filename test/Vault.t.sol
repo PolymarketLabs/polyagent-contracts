@@ -283,6 +283,57 @@ contract VaultTest is Test {
         vault.cancelDeposit(epoch, index);
     }
 
+    /// @notice 撤销赎回后应解锁份额并标记 Canceled
+    function test_cancelRedeem_unlocksSharesAndMarksCanceled() public {
+        uint256 shares = 10e18;
+        deal(address(vault), alice, shares, true);
+
+        vm.startPrank(alice);
+        (uint256 epoch, uint256 index) = vault.requestRedeem(shares);
+        vault.cancelRedeem(epoch, index);
+        vm.stopPrank();
+
+        (address investor, uint256 recordedShares, ReqStatus status, uint256 recordedEpoch) =
+            vault.redeemRequests(epoch, index);
+        assertEq(investor, alice);
+        assertEq(recordedShares, shares);
+        assertEq(uint8(status), uint8(ReqStatus.Canceled));
+        assertEq(recordedEpoch, epoch);
+        assertEq(vault.balanceOf(alice), shares);
+        assertEq(vault.balanceOf(address(vault)), 0);
+    }
+
+    /// @notice 非请求所有者撤销赎回应回滚
+    function test_cancelRedeem_reverts_whenNotRequestOwner() public {
+        uint256 shares = 10e18;
+        deal(address(vault), alice, shares, true);
+
+        vm.prank(alice);
+        (uint256 epoch, uint256 index) = vault.requestRedeem(shares);
+
+        vm.prank(bob);
+        vm.expectRevert(VaultErrors.NotRequestOwner.selector);
+        vault.cancelRedeem(epoch, index);
+    }
+
+    /// @notice 已封账 epoch 的赎回撤销应回滚
+    function test_cancelRedeem_reverts_whenEpochAlreadyFinalized() public {
+        uint256 shares = 10e18;
+        deal(address(vault), alice, shares, true);
+
+        vm.prank(alice);
+        (uint256 epoch, uint256 index) = vault.requestRedeem(shares);
+
+        // EpochSnapshot.finalizedAt 位于 snapshots[epoch] 结构体的第 4 个 slot（offset = 3）
+        bytes32 snapshotBaseSlot = keccak256(abi.encode(epoch, SNAPSHOTS_MAPPING_SLOT));
+        bytes32 finalizedAtSlot = bytes32(uint256(snapshotBaseSlot) + 3);
+        vm.store(address(vault), finalizedAtSlot, bytes32(uint256(1)));
+
+        vm.prank(alice);
+        vm.expectRevert(VaultErrors.EpochAlreadyFinalized.selector);
+        vault.cancelRedeem(epoch, index);
+    }
+
     function _deployFactory(address initialOwner) internal returns (VaultFactory localFactory) {
         Vault implementation = new Vault();
         UpgradeableBeacon beacon = new UpgradeableBeacon(address(implementation), beaconOwner);
@@ -309,9 +360,6 @@ contract VaultTest is Test {
     // TODO(vault): 待业务函数实现后补充以下测试（函数名预留 + 中文说明）
     // function test_requestDeposit_reverts_whenDepositPaused() public {} // 申购暂停时应回滚
     // function test_requestRedeem_reverts_whenRedeemPaused() public {} // 赎回暂停时应回滚
-    // function test_cancelRedeem_reverts_whenNotRequestOwner() public {} // 非请求所有者撤销赎回应回滚
-    // function test_cancelRedeem_reverts_whenEpochAlreadyFinalized() public {} // 已封账 epoch 的赎回撤销应回滚
-    // function test_cancelRedeem_unlocksSharesAndMarksCanceled() public {} // 撤销赎回后应解锁份额并标记 Canceled
     // function test_finalizeEpoch_reverts_whenCalledByNonOperator() public {} // 非 operator 封账应回滚
     // function test_finalizeEpoch_reverts_forCurrentOrFutureEpoch() public {} // 当前或未来 epoch 封账应回滚
     // function test_finalizeEpoch_reverts_whenCalledTwiceForSameEpoch() public {} // 同一 epoch 二次封账应回滚
