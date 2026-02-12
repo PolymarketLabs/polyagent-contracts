@@ -156,7 +156,28 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, I
         emit RedeemRequested(epoch, index, msg.sender, shares);
     }
 
-    function cancelDeposit(uint256 epoch, uint256 index) external override nonReentrant {}
+    function cancelDeposit(uint256 epoch, uint256 index) external override nonReentrant {
+        // 已封账 epoch 的请求不可撤销，避免破坏结算口径
+        if (snapshots[epoch].finalizedAt != 0) {
+            revert EpochAlreadyFinalized();
+        }
+
+        DepositRequest storage req = depositRequests[epoch][index];
+        // 仅请求发起人可撤销
+        if (req.investor != msg.sender) {
+            revert NotRequestOwner();
+        }
+        // 仅 Pending 请求可撤销，已结算/已撤销请求禁止重复操作
+        if (req.status != ReqStatus.Pending) {
+            revert InvalidRequestStatus();
+        }
+
+        // 先更新状态再退款，遵循 CEI
+        req.status = ReqStatus.Canceled;
+        IERC20(baseAsset).safeTransfer(msg.sender, req.amount);
+
+        emit DepositCanceled(epoch, index, msg.sender, req.amount);
+    }
 
     function cancelRedeem(uint256 epoch, uint256 index) external override nonReentrant {}
 

@@ -14,6 +14,7 @@ import {VaultFactory} from "../src/VaultFactory.sol";
 contract VaultTest is Test {
     uint256 public constant INITIAL_TIMESTAMP = 1767225600; // 2026-01-01 00:00:00 UTC
     uint256 public constant SECONDS_PER_EPOCH = 86400;
+    uint256 internal constant SNAPSHOTS_MAPPING_SLOT = 11; // Vault.snapshots 的映射槽位（需与 Vault 存储布局保持一致）
 
     USDC public usdc;
     VaultFactory public factory;
@@ -223,6 +224,65 @@ contract VaultTest is Test {
         vault.requestRedeem(0);
     }
 
+    /// @notice 撤销申购后应退款并标记 Canceled
+    function test_cancelDeposit_returnsBaseAssetAndMarksCanceled() public {
+        uint256 amount = 100e6;
+        vm.prank(address(this));
+        usdc.transfer(alice, amount);
+
+        vm.startPrank(alice);
+        usdc.approve(address(vault), amount);
+        (uint256 epoch, uint256 index) = vault.requestDeposit(amount, bob);
+        vault.cancelDeposit(epoch, index);
+        vm.stopPrank();
+
+        (address investor, uint256 recordedAmount, ReqStatus status, uint256 recordedEpoch) =
+            vault.depositRequests(epoch, index);
+        assertEq(investor, alice);
+        assertEq(recordedAmount, amount);
+        assertEq(uint8(status), uint8(ReqStatus.Canceled));
+        assertEq(recordedEpoch, epoch);
+        assertEq(usdc.balanceOf(alice), amount);
+        assertEq(usdc.balanceOf(address(vault)), 0);
+    }
+
+    /// @notice 非请求所有者撤销申购应回滚
+    function test_cancelDeposit_reverts_whenNotRequestOwner() public {
+        uint256 amount = 100e6;
+        vm.prank(address(this));
+        usdc.transfer(alice, amount);
+
+        vm.prank(alice);
+        usdc.approve(address(vault), amount);
+        vm.prank(alice);
+        (uint256 epoch, uint256 index) = vault.requestDeposit(amount, bob);
+
+        vm.prank(bob);
+        vm.expectRevert(VaultErrors.NotRequestOwner.selector);
+        vault.cancelDeposit(epoch, index);
+    }
+
+    /// @notice 已封账 epoch 的申购撤销应回滚
+    function test_cancelDeposit_reverts_whenEpochAlreadyFinalized() public {
+        uint256 amount = 100e6;
+        vm.prank(address(this));
+        usdc.transfer(alice, amount);
+
+        vm.prank(alice);
+        usdc.approve(address(vault), amount);
+        vm.prank(alice);
+        (uint256 epoch, uint256 index) = vault.requestDeposit(amount, bob);
+
+        // EpochSnapshot.finalizedAt 位于 snapshots[epoch] 结构体的第 4 个 slot（offset = 3）
+        bytes32 snapshotBaseSlot = keccak256(abi.encode(epoch, SNAPSHOTS_MAPPING_SLOT));
+        bytes32 finalizedAtSlot = bytes32(uint256(snapshotBaseSlot) + 3);
+        vm.store(address(vault), finalizedAtSlot, bytes32(uint256(1)));
+
+        vm.prank(alice);
+        vm.expectRevert(VaultErrors.EpochAlreadyFinalized.selector);
+        vault.cancelDeposit(epoch, index);
+    }
+
     function _deployFactory(address initialOwner) internal returns (VaultFactory localFactory) {
         Vault implementation = new Vault();
         UpgradeableBeacon beacon = new UpgradeableBeacon(address(implementation), beaconOwner);
@@ -249,9 +309,6 @@ contract VaultTest is Test {
     // TODO(vault): 待业务函数实现后补充以下测试（函数名预留 + 中文说明）
     // function test_requestDeposit_reverts_whenDepositPaused() public {} // 申购暂停时应回滚
     // function test_requestRedeem_reverts_whenRedeemPaused() public {} // 赎回暂停时应回滚
-    // function test_cancelDeposit_reverts_whenNotRequestOwner() public {} // 非请求所有者撤销申购应回滚
-    // function test_cancelDeposit_reverts_whenEpochAlreadyFinalized() public {} // 已封账 epoch 的申购撤销应回滚
-    // function test_cancelDeposit_returnsBaseAssetAndMarksCanceled() public {} // 撤销申购后应退款并标记 Canceled
     // function test_cancelRedeem_reverts_whenNotRequestOwner() public {} // 非请求所有者撤销赎回应回滚
     // function test_cancelRedeem_reverts_whenEpochAlreadyFinalized() public {} // 已封账 epoch 的赎回撤销应回滚
     // function test_cancelRedeem_unlocksSharesAndMarksCanceled() public {} // 撤销赎回后应解锁份额并标记 Canceled
