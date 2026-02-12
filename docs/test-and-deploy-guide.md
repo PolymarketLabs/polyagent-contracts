@@ -117,7 +117,7 @@ make deploy-mainnet
 
 ## 6. 升级流程（Beacon -> VaultV2）
 
-升级脚本：`script/UpgradeVaultScript.s.sol:UpgradeBeaconScript`  
+升级脚本：`script/UpgradeVault.s.sol:UpgradeBeaconScript`  
 脚本行为：
 
 1. 部署新的 `VaultV2` 实现合约。
