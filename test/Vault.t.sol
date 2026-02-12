@@ -31,6 +31,7 @@ contract VaultTest is Test {
     address bob = makeAddr("bob");
 
     event Claimed(address indexed investor, address indexed to, uint256 amount);
+    event EpochFinalized(uint256 indexed epoch, uint256 totalAum, uint256 sharesAtSettle, uint256 navPerShare);
 
     function setUp() public {
         vm.warp(INITIAL_TIMESTAMP);
@@ -390,6 +391,59 @@ contract VaultTest is Test {
         assertEq(usdc.balanceOf(bob), 0);
     }
 
+    /// @notice 非 operator 调用 finalizeEpoch 应回滚
+    function test_finalizeEpoch_reverts_whenCalledByNonOperator() public {
+        uint256 epoch = vault.currentEpoch() - 1;
+        vm.prank(alice);
+        vm.expectRevert();
+        vault.finalizeEpoch(epoch, 100e6);
+    }
+
+    /// @notice 当前或未来 epoch 封账应回滚
+    function test_finalizeEpoch_reverts_forCurrentOrFutureEpoch() public {
+        uint256 current = vault.currentEpoch();
+
+        vm.prank(operator);
+        vm.expectRevert(VaultErrors.InvalidFinalizeEpoch.selector);
+        vault.finalizeEpoch(current, 100e6);
+
+        vm.prank(operator);
+        vm.expectRevert(VaultErrors.InvalidFinalizeEpoch.selector);
+        vault.finalizeEpoch(current + 1, 100e6);
+    }
+
+    /// @notice 同一 epoch 二次封账应回滚
+    function test_finalizeEpoch_reverts_whenCalledTwiceForSameEpoch() public {
+        uint256 epoch = vault.currentEpoch() - 1;
+        vm.prank(operator);
+        vault.finalizeEpoch(epoch, 100e6);
+
+        vm.prank(operator);
+        vm.expectRevert(VaultErrors.EpochAlreadyFinalized.selector);
+        vault.finalizeEpoch(epoch, 200e6);
+    }
+
+    /// @notice 封账应写入快照并触发事件
+    function test_finalizeEpoch_storesSnapshotAndEmitsEvent() public {
+        uint256 sharesAtSettle = 200e18;
+        uint256 totalAum = 500e6;
+        uint256 epoch = vault.currentEpoch() - 1;
+        uint256 expectedNavPerShare = (totalAum * 1e18) / sharesAtSettle;
+
+        deal(address(vault), alice, sharesAtSettle, true);
+
+        vm.prank(operator);
+        vm.expectEmit(true, true, true, true);
+        emit EpochFinalized(epoch, totalAum, sharesAtSettle, expectedNavPerShare);
+        vault.finalizeEpoch(epoch, totalAum);
+
+        (uint256 storedAum, uint256 storedShares, uint256 storedNav, uint256 finalizedAt) = vault.snapshots(epoch);
+        assertEq(storedAum, totalAum);
+        assertEq(storedShares, sharesAtSettle);
+        assertEq(storedNav, expectedNavPerShare);
+        assertEq(finalizedAt, block.timestamp);
+    }
+
     function _deployFactory(address initialOwner) internal returns (VaultFactory localFactory) {
         Vault implementation = new Vault();
         UpgradeableBeacon beacon = new UpgradeableBeacon(address(implementation), beaconOwner);
@@ -421,10 +475,6 @@ contract VaultTest is Test {
     // TODO(vault): 待业务函数实现后补充以下测试（函数名预留 + 中文说明）
     // function test_requestDeposit_reverts_whenDepositPaused() public {} // 申购暂停时应回滚
     // function test_requestRedeem_reverts_whenRedeemPaused() public {} // 赎回暂停时应回滚
-    // function test_finalizeEpoch_reverts_whenCalledByNonOperator() public {} // 非 operator 封账应回滚
-    // function test_finalizeEpoch_reverts_forCurrentOrFutureEpoch() public {} // 当前或未来 epoch 封账应回滚
-    // function test_finalizeEpoch_reverts_whenCalledTwiceForSameEpoch() public {} // 同一 epoch 二次封账应回滚
-    // function test_finalizeEpoch_storesSnapshotAndEmitsEvent() public {} // 封账应写入快照并触发事件
     // function test_settleDeposits_processesBatchAndUpdatesCursor() public {} // 申购批结算应推进游标并更新状态
     // function test_settleRedeems_processesBatchAndUpdatesCursor() public {} // 赎回批结算应推进游标并更新状态
     // function test_transferToExecutor_reverts_whenCalledByNonOperator() public {} // 非 operator 划转执行钱包应回滚

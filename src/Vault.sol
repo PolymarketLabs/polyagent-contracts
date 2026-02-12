@@ -21,6 +21,7 @@ import {VaultErrors} from "./vault/VaultErrors.sol";
 
 contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, IVault, VaultEvents, VaultErrors {
     using SafeERC20 for IERC20;
+    uint256 private constant NAV_SCALE = 1e18; // 采用 1e18 精度记录 NAV，避免与份额 decimals 耦合
 
     // ===== 角色常量 =====
     bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
@@ -221,7 +222,27 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, I
 
     // ===== 运营操作 =====
 
-    function finalizeEpoch(uint256 epoch, uint256 totalAum) external override onlyRole(OPERATOR_ROLE) {}
+    function finalizeEpoch(uint256 epoch, uint256 totalAum) external override onlyRole(OPERATOR_ROLE) {
+        uint256 current = _currentEpoch();
+        // 仅允许封账历史 epoch，当前/未来 epoch 结算口径尚未闭合
+        if (epoch >= current) {
+            revert InvalidFinalizeEpoch();
+        }
+        // 同一 epoch 只允许封账一次
+        if (snapshots[epoch].finalizedAt != 0) {
+            revert EpochAlreadyFinalized();
+        }
+
+        uint256 sharesAtSettle = totalSupply();
+        uint256 navPerShare = sharesAtSettle == 0 ? 0 : (totalAum * NAV_SCALE) / sharesAtSettle;
+
+        // 固化该 epoch 结算口径（AUM、份额、NAV、封账时间）
+        snapshots[epoch] = EpochSnapshot({
+            totalAum: totalAum, sharesAtSettle: sharesAtSettle, navPerShare: navPerShare, finalizedAt: block.timestamp
+        });
+
+        emit EpochFinalized(epoch, totalAum, sharesAtSettle, navPerShare);
+    }
 
     function settleDeposits(uint256 epoch, uint256 maxCount) external override onlyRole(OPERATOR_ROLE) {}
 

@@ -10,8 +10,10 @@ abstract contract VaultErrors {
     error NotRequestOwner();
     /// @notice 请求状态不允许执行当前操作（例如已结算/已撤销）
     error InvalidRequestStatus();
-    /// @notice 目标 epoch 已封账，不允许再撤销请求
+    /// @notice 目标 epoch 已封账，不允许再撤销请求或重复封账
     error EpochAlreadyFinalized();
+    /// @notice 封账目标 epoch 非历史 epoch（当前或未来）
+    error InvalidFinalizeEpoch();
     error DepositPaused();
     error DepositNotPaused();
     error RedeemPaused();
