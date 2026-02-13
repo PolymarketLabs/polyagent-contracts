@@ -80,7 +80,7 @@ contract VaultAdminTest is Test {
         assertFalse(vault.hasRole(vault.OPERATOR_ROLE(), operator));
 
         vm.prank(address(this));
-        usdc.transfer(address(vault), 10e6);
+        assertTrue(usdc.transfer(address(vault), 10e6));
 
         vm.prank(operator);
         vm.expectRevert();
@@ -106,7 +106,7 @@ contract VaultAdminTest is Test {
 
         uint256 amount = 7e6;
         vm.prank(address(this));
-        usdc.transfer(address(vault), amount);
+        assertTrue(usdc.transfer(address(vault), amount));
 
         vm.prank(operator);
         vault.transferToExecutor(amount);

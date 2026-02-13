@@ -12,21 +12,21 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 
 /// @notice Handler exposes only settlement operations for invariant fuzzing.
 contract VaultSettlementCursorHandler is Test {
-    Vault public immutable vault;
-    uint256 public immutable epoch;
-    address public immutable operator;
-    uint256 public immutable depositCount;
-    uint256 public immutable redeemCount;
+    Vault public immutable VAULT;
+    uint256 public immutable EPOCH;
+    address public immutable OPERATOR;
+    uint256 public immutable DEPOSIT_COUNT;
+    uint256 public immutable REDEEM_COUNT;
 
     uint256 public lastDepositCursor;
     uint256 public lastRedeemCursor;
 
     constructor(Vault _vault, uint256 _epoch, address _operator, uint256 _depositCount, uint256 _redeemCount) {
-        vault = _vault;
-        epoch = _epoch;
-        operator = _operator;
-        depositCount = _depositCount;
-        redeemCount = _redeemCount;
+        VAULT = _vault;
+        EPOCH = _epoch;
+        OPERATOR = _operator;
+        DEPOSIT_COUNT = _depositCount;
+        REDEEM_COUNT = _redeemCount;
     }
 
     function settleDeposits(uint256 rawMaxCount) external {
@@ -57,41 +57,41 @@ contract VaultSettlementCursorHandler is Test {
 
     function _settleDeposits(uint256 rawMaxCount) internal {
         // Once done is true, calling settle again would revert by design.
-        (,, bool depositsDone,) = vault.cursors(epoch);
+        (,, bool depositsDone,) = VAULT.cursors(EPOCH);
         if (depositsDone) {
             return;
         }
 
         uint256 maxCount = bound(rawMaxCount, 1, 8);
-        vm.prank(operator);
-        vault.settleDeposits(epoch, maxCount);
+        vm.prank(OPERATOR);
+        VAULT.settleDeposits(EPOCH, maxCount);
 
-        (uint256 nextDeposit,, bool doneAfter,) = vault.cursors(epoch);
+        (uint256 nextDeposit,, bool doneAfter,) = VAULT.cursors(EPOCH);
         assertGe(nextDeposit, lastDepositCursor);
-        assertLe(nextDeposit, depositCount);
+        assertLe(nextDeposit, DEPOSIT_COUNT);
         lastDepositCursor = nextDeposit;
         if (doneAfter) {
-            assertEq(nextDeposit, depositCount);
+            assertEq(nextDeposit, DEPOSIT_COUNT);
         }
     }
 
     function _settleRedeems(uint256 rawMaxCount) internal {
         // Once done is true, calling settle again would revert by design.
-        (,,, bool redeemsDone) = vault.cursors(epoch);
+        (,,, bool redeemsDone) = VAULT.cursors(EPOCH);
         if (redeemsDone) {
             return;
         }
 
         uint256 maxCount = bound(rawMaxCount, 1, 8);
-        vm.prank(operator);
-        vault.settleRedeems(epoch, maxCount);
+        vm.prank(OPERATOR);
+        VAULT.settleRedeems(EPOCH, maxCount);
 
-        (, uint256 nextRedeem,, bool doneAfter) = vault.cursors(epoch);
+        (, uint256 nextRedeem,, bool doneAfter) = VAULT.cursors(EPOCH);
         assertGe(nextRedeem, lastRedeemCursor);
-        assertLe(nextRedeem, redeemCount);
+        assertLe(nextRedeem, REDEEM_COUNT);
         lastRedeemCursor = nextRedeem;
         if (doneAfter) {
-            assertEq(nextRedeem, redeemCount);
+            assertEq(nextRedeem, REDEEM_COUNT);
         }
     }
 }
@@ -133,7 +133,7 @@ contract VaultCursorInvariantTest is StdInvariant, Test {
 
         uint256 totalDepositAmount = DEPOSIT_COUNT * 10e6;
         vm.prank(address(this));
-        usdc.transfer(alice, totalDepositAmount);
+        assertTrue(usdc.transfer(alice, totalDepositAmount));
 
         vm.startPrank(alice);
         usdc.approve(address(vault), totalDepositAmount);

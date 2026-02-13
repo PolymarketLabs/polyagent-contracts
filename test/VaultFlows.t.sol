@@ -43,7 +43,7 @@ contract VaultFlowsTest is Test {
         deal(address(vault), manager, managerShares, true);
 
         vm.prank(address(this));
-        usdc.transfer(alice, depositAmount);
+        assertTrue(usdc.transfer(alice, depositAmount));
         vm.startPrank(alice);
         usdc.approve(address(vault), depositAmount);
         (uint256 epoch, uint256 index) = vault.requestDeposit(depositAmount, address(0));
@@ -85,7 +85,7 @@ contract VaultFlowsTest is Test {
         deal(address(vault), bob, bobShares, true);
 
         vm.prank(address(this));
-        usdc.transfer(alice, aliceDeposit);
+        assertTrue(usdc.transfer(alice, aliceDeposit));
         vm.startPrank(alice);
         usdc.approve(address(vault), aliceDeposit);
         (uint256 epoch, uint256 depositIndex) = vault.requestDeposit(aliceDeposit, address(0));
@@ -131,7 +131,7 @@ contract VaultFlowsTest is Test {
         deal(address(vault), manager, 100e18, true);
 
         vm.prank(address(this));
-        usdc.transfer(alice, 100e6);
+        assertTrue(usdc.transfer(alice, 100e6));
         vm.startPrank(alice);
         usdc.approve(address(vault), 100e6);
         (uint256 epoch2, uint256 aliceIndex) = vault.requestDeposit(100e6, address(0));
@@ -144,7 +144,7 @@ contract VaultFlowsTest is Test {
 
         vm.warp(block.timestamp + SECONDS_PER_EPOCH + 1);
         vm.prank(address(this));
-        usdc.transfer(bob, 50e6);
+        assertTrue(usdc.transfer(bob, 50e6));
         vm.startPrank(bob);
         usdc.approve(address(vault), 50e6);
         (uint256 epoch3, uint256 bobIndex) = vault.requestDeposit(50e6, address(0));
@@ -281,7 +281,7 @@ contract VaultFlowsTest is Test {
         deal(address(vault), manager, managerShares, true);
 
         vm.prank(address(this));
-        usdc.transfer(alice, depositAmount);
+        assertTrue(usdc.transfer(alice, depositAmount));
         vm.startPrank(alice);
         usdc.approve(address(vault), depositAmount);
         (uint256 epoch1,) = vault.requestDeposit(depositAmount, address(0));
@@ -292,7 +292,7 @@ contract VaultFlowsTest is Test {
 
         vm.warp(block.timestamp + SECONDS_PER_EPOCH + 1);
         vm.prank(address(this));
-        usdc.transfer(bob, depositAmount);
+        assertTrue(usdc.transfer(bob, depositAmount));
         vm.startPrank(bob);
         usdc.approve(address(vault), depositAmount);
         (uint256 epoch2,) = vault.requestDeposit(depositAmount, address(0));
@@ -334,9 +334,9 @@ contract VaultFlowsTest is Test {
         deal(address(vault), manager, managerShares, true);
 
         vm.prank(address(this));
-        usdc.transfer(alice, aliceAmount);
+        assertTrue(usdc.transfer(alice, aliceAmount));
         vm.prank(address(this));
-        usdc.transfer(bob, bobAmount);
+        assertTrue(usdc.transfer(bob, bobAmount));
 
         vm.startPrank(alice);
         usdc.approve(address(vault), aliceAmount);

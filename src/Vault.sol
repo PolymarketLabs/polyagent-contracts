@@ -56,6 +56,7 @@ contract Vault is ERC20Upgradeable, ReentrancyGuard, VaultAdmin, VaultEvents, Va
     uint256 public lastFinalizedEpoch; // 最近一次完成封账的 epoch（首次封账前为 0）
 
     // ===== 升级预留 =====
+    // forge-lint: disable-next-line(mixed-case-variable)
     uint256[100] private __gap;
 
     /// @custom:oz-upgrades-unsafe-allow constructor

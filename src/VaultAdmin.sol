@@ -32,6 +32,7 @@ abstract contract VaultAdmin is AccessControlUpgradeable, IVaultAdmin {
     bool public redeemPaused; // 赎回暂停开关
 
     // ===== 升级预留 =====
+    // forge-lint: disable-next-line(mixed-case-variable)
     uint256[50] private __gap;
 
     // ===== 管理员操作 =====

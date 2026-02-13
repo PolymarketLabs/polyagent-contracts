@@ -153,7 +153,7 @@ contract VaultTest is Test {
     function test_requestDeposit_recordsPendingAndTransfersBaseAsset() public {
         uint256 amount = 100e6;
         vm.prank(address(this));
-        usdc.transfer(alice, amount);
+        assertTrue(usdc.transfer(alice, amount));
 
         vm.prank(alice);
         usdc.approve(address(vault), amount);
@@ -180,7 +180,7 @@ contract VaultTest is Test {
     function test_requestDeposit_referrerOnlyBindsWhenUnbound() public {
         uint256 amount = 100e6;
         vm.prank(address(this));
-        usdc.transfer(alice, amount * 2);
+        assertTrue(usdc.transfer(alice, amount * 2));
 
         vm.startPrank(alice);
         usdc.approve(address(vault), amount * 2);
@@ -234,9 +234,9 @@ contract VaultTest is Test {
         uint256 bobAmount = 50e6;
 
         vm.prank(address(this));
-        usdc.transfer(alice, aliceAmount);
+        assertTrue(usdc.transfer(alice, aliceAmount));
         vm.prank(address(this));
-        usdc.transfer(bob, bobAmount);
+        assertTrue(usdc.transfer(bob, bobAmount));
 
         vm.startPrank(alice);
         usdc.approve(address(vault), aliceAmount);
@@ -273,7 +273,7 @@ contract VaultTest is Test {
     function test_requestDeposit_reverts_whenDepositPaused() public {
         uint256 amount = 100e6;
         vm.prank(address(this));
-        usdc.transfer(alice, amount);
+        assertTrue(usdc.transfer(alice, amount));
 
         vm.prank(admin);
         vault.pauseDeposit();
@@ -302,7 +302,7 @@ contract VaultTest is Test {
     function test_cancelDeposit_returnsBaseAssetAndMarksCanceled() public {
         uint256 amount = 100e6;
         vm.prank(address(this));
-        usdc.transfer(alice, amount);
+        assertTrue(usdc.transfer(alice, amount));
 
         vm.startPrank(alice);
         usdc.approve(address(vault), amount);
@@ -322,7 +322,7 @@ contract VaultTest is Test {
     function test_cancelDeposit_reverts_whenNotRequestOwner() public {
         uint256 amount = 100e6;
         vm.prank(address(this));
-        usdc.transfer(alice, amount);
+        assertTrue(usdc.transfer(alice, amount));
 
         vm.prank(alice);
         usdc.approve(address(vault), amount);
@@ -338,7 +338,7 @@ contract VaultTest is Test {
     function test_cancelDeposit_reverts_whenEpochAlreadyFinalized() public {
         uint256 amount = 100e6;
         vm.prank(address(this));
-        usdc.transfer(alice, amount);
+        assertTrue(usdc.transfer(alice, amount));
 
         vm.prank(alice);
         usdc.approve(address(vault), amount);
@@ -432,9 +432,9 @@ contract VaultTest is Test {
         uint256 bobAmount = 50e6;
 
         vm.prank(address(this));
-        usdc.transfer(alice, aliceAmount);
+        assertTrue(usdc.transfer(alice, aliceAmount));
         vm.prank(address(this));
-        usdc.transfer(bob, bobAmount);
+        assertTrue(usdc.transfer(bob, bobAmount));
 
         vm.startPrank(alice);
         usdc.approve(address(vault), aliceAmount);
@@ -500,7 +500,7 @@ contract VaultTest is Test {
         deal(address(vault), manager, managerShares, true);
 
         vm.prank(address(this));
-        usdc.transfer(alice, depositAmount);
+        assertTrue(usdc.transfer(alice, depositAmount));
         vm.startPrank(alice);
         usdc.approve(address(vault), depositAmount);
         (uint256 epoch,) = vault.requestDeposit(depositAmount, bob);
@@ -537,7 +537,7 @@ contract VaultTest is Test {
         deal(address(vault), manager, managerShares, true);
 
         vm.prank(address(this));
-        usdc.transfer(alice, depositAmount);
+        assertTrue(usdc.transfer(alice, depositAmount));
         vm.startPrank(alice);
         usdc.approve(address(vault), depositAmount);
         (uint256 epoch,) = vault.requestDeposit(depositAmount, address(0));
@@ -809,7 +809,7 @@ contract VaultTest is Test {
     function test_transferToExecutor_transfersBaseAssetToExecutor() public {
         uint256 amount = 123e6;
         vm.prank(address(this));
-        usdc.transfer(address(vault), amount);
+        assertTrue(usdc.transfer(address(vault), amount));
 
         uint256 beforeVault = usdc.balanceOf(address(vault));
         uint256 beforeExecutor = usdc.balanceOf(executor);
@@ -825,7 +825,7 @@ contract VaultTest is Test {
     function test_claim_transfersClaimableAssetsAndEmitsClaimed() public {
         uint256 amount = 100e6;
         vm.prank(address(this));
-        usdc.transfer(address(vault), amount);
+        assertTrue(usdc.transfer(address(vault), amount));
         _setClaimableAsset(alice, amount);
 
         vm.prank(alice);
@@ -858,7 +858,7 @@ contract VaultTest is Test {
         uint256 claimableAmount = 100e6;
         uint256 vaultBalance = 50e6;
         vm.prank(address(this));
-        usdc.transfer(address(vault), vaultBalance);
+        assertTrue(usdc.transfer(address(vault), vaultBalance));
         _setClaimableAsset(alice, claimableAmount);
 
         vm.prank(alice);
@@ -878,7 +878,7 @@ contract VaultTest is Test {
     function test_claimFee_transfersFeeAndEmitsEvent() public {
         uint256 amount = 100e6;
         vm.prank(address(this));
-        usdc.transfer(address(vault), amount);
+        assertTrue(usdc.transfer(address(vault), amount));
         _setFeeClaimable(alice, amount);
 
         vm.prank(alice);
@@ -912,7 +912,7 @@ contract VaultTest is Test {
         uint256 claimableAmount = 100e6;
         uint256 vaultBalance = 50e6;
         vm.prank(address(this));
-        usdc.transfer(address(vault), vaultBalance);
+        assertTrue(usdc.transfer(address(vault), vaultBalance));
         _setFeeClaimable(alice, claimableAmount);
 
         vm.prank(alice);
@@ -993,7 +993,7 @@ contract VaultTest is Test {
     function test_finalizeEpoch_reverts_whenTotalAumLessThanNetRequestedDeposits() public {
         uint256 depositAmount = 100e6;
         vm.prank(address(this));
-        usdc.transfer(alice, depositAmount);
+        assertTrue(usdc.transfer(alice, depositAmount));
 
         vm.startPrank(alice);
         usdc.approve(address(vault), depositAmount);

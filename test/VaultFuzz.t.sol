@@ -52,7 +52,7 @@ contract VaultFuzzTest is Test {
         deal(address(vault), manager, managerShares, true);
 
         vm.prank(address(this));
-        usdc.transfer(alice, amount);
+        assertTrue(usdc.transfer(alice, amount));
         vm.startPrank(alice);
         usdc.approve(address(vault), amount);
         (uint256 epoch, uint256 index) = vault.requestDeposit(amount, address(0));
@@ -149,8 +149,14 @@ contract VaultFuzzTest is Test {
             managerSplit = (managerSplit * BPS_DENOMINATOR) / sum;
         }
 
+        // casting to uint16 is safe because platform/referrer/managerSplit are all normalized into [0, 10_000]
         split = SplitConfig({
-            platformBps: uint16(platform), referrerBps: uint16(referrer), managerBps: uint16(managerSplit)
+            // forge-lint: disable-next-line(unsafe-typecast)
+            platformBps: uint16(platform),
+            // forge-lint: disable-next-line(unsafe-typecast)
+            referrerBps: uint16(referrer),
+            // forge-lint: disable-next-line(unsafe-typecast)
+            managerBps: uint16(managerSplit)
         });
     }
 
