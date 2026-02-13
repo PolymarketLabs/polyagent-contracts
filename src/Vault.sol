@@ -312,7 +312,61 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, I
         }
     }
 
-    function settleRedeems(uint256 epoch, uint256 maxCount) external override onlyRole(OPERATOR_ROLE) {}
+    function settleRedeems(uint256 epoch, uint256 maxCount) external override onlyRole(OPERATOR_ROLE) {
+        if (maxCount == 0) {
+            revert InvalidMaxCount();
+        }
+
+        EpochSnapshot storage snapshot = snapshots[epoch];
+        // 仅允许结算已封账的 epoch
+        if (snapshot.finalizedAt == 0) {
+            revert InvalidFinalizeEpoch();
+        }
+
+        SettlementCursor storage cursor = cursors[epoch];
+        if (cursor.redeemsDone) {
+            revert RedeemsSettlementCompleted();
+        }
+
+        RedeemRequest[] storage requests = redeemRequests[epoch];
+        uint256 len = requests.length;
+        uint256 start = cursor.nextRedeem;
+
+        // 空批次或已到队尾时直接标记完成
+        if (start >= len) {
+            cursor.redeemsDone = true;
+            revert RedeemsSettlementCompleted();
+        }
+
+        uint256 navPerShare = snapshot.navPerShare;
+        if (navPerShare == 0) {
+            revert InvalidFinalizeEpoch();
+        }
+
+        uint256 end = start + maxCount;
+        if (end > len) {
+            end = len;
+        }
+
+        for (uint256 i = start; i < end; i++) {
+            RedeemRequest storage req = requests[i];
+            if (req.status != ReqStatus.Pending) {
+                continue;
+            }
+
+            uint256 assets = (req.shares * navPerShare) / NAV_SCALE;
+            req.status = ReqStatus.Settled;
+            _burn(address(this), req.shares);
+            claimableAssets[req.investor] += assets;
+
+            emit RedeemSettled(epoch, i, req.investor, assets);
+        }
+
+        cursor.nextRedeem = end;
+        if (end == len) {
+            cursor.redeemsDone = true;
+        }
+    }
 
     function transferToExecutor(uint256 amount) external override onlyRole(OPERATOR_ROLE) {}
 

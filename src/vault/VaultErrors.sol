@@ -29,5 +29,6 @@ abstract contract VaultErrors {
     error InvalidEffectiveEpoch();
     error FeePolicyNotFound();
     error DepositsSettlementCompleted();
+    error RedeemsSettlementCompleted();
     error InvalidMaxCount();
 }

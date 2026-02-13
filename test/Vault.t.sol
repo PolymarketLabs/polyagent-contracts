@@ -409,6 +409,81 @@ contract VaultTest is Test {
         vault.settleDeposits(epoch, 1);
     }
 
+    /// @notice 未封账 epoch 调用 settleRedeems 应回滚
+    function test_settleRedeems_reverts_whenEpochNotFinalized() public {
+        uint256 epoch = vault.currentEpoch();
+
+        vm.prank(operator);
+        vm.expectRevert(VaultErrors.InvalidFinalizeEpoch.selector);
+        vault.settleRedeems(epoch, 1);
+    }
+
+    /// @notice maxCount 为 0 时 settleRedeems 应回滚
+    function test_settleRedeems_reverts_whenMaxCountIsZero() public {
+        uint256 epoch = vault.currentEpoch();
+
+        vm.prank(operator);
+        vm.expectRevert(VaultErrors.InvalidMaxCount.selector);
+        vault.settleRedeems(epoch, 0);
+    }
+
+    /// @notice 赎回批结算应按 NAV 记入 claimable、跳过非 Pending 请求并推进游标
+    function test_settleRedeems_processesBatchAndUpdatesCursor() public {
+        uint256 aliceShares = 10e18;
+        uint256 bobShares = 5e18;
+        uint256 managerShares = 185e18;
+
+        deal(address(vault), alice, aliceShares, true);
+        deal(address(vault), bob, bobShares, true);
+        deal(address(vault), manager, managerShares, true);
+
+        vm.prank(alice);
+        (uint256 epoch, uint256 aliceIndex) = vault.requestRedeem(aliceShares);
+
+        vm.startPrank(bob);
+        (, uint256 bobIndex) = vault.requestRedeem(bobShares);
+        vault.cancelRedeem(epoch, bobIndex);
+        vm.stopPrank();
+
+        uint256 totalAum = 500e6;
+        vm.warp(block.timestamp + (2 * SECONDS_PER_EPOCH));
+
+        vm.prank(operator);
+        vault.finalizeEpoch(epoch, totalAum);
+
+        uint256 expectedNavPerShare = (totalAum * 1e18) / vault.totalSupply();
+        uint256 expectedClaimableAssets = (aliceShares * expectedNavPerShare) / 1e18;
+
+        vm.prank(operator);
+        vault.settleRedeems(epoch, 1);
+
+        (, , ReqStatus aliceStatus) = vault.redeemRequests(epoch, aliceIndex);
+        (, , ReqStatus bobStatus) = vault.redeemRequests(epoch, bobIndex);
+        assertEq(uint8(aliceStatus), uint8(ReqStatus.Settled));
+        assertEq(uint8(bobStatus), uint8(ReqStatus.Canceled));
+        assertEq(vault.claimableAssets(alice), expectedClaimableAssets);
+        assertEq(vault.balanceOf(address(vault)), 0);
+
+        (uint256 nextDeposit, uint256 nextRedeem, bool depositsDone, bool redeemsDone) = vault.cursors(epoch);
+        assertEq(nextDeposit, 0);
+        assertEq(nextRedeem, 1);
+        assertFalse(depositsDone);
+        assertFalse(redeemsDone);
+
+        vm.prank(operator);
+        vault.settleRedeems(epoch, 10);
+
+        (nextDeposit, nextRedeem, depositsDone, redeemsDone) = vault.cursors(epoch);
+        assertEq(nextDeposit, 0);
+        assertEq(nextRedeem, 2);
+        assertFalse(depositsDone);
+        assertTrue(redeemsDone);
+
+        vm.prank(operator);
+        vm.expectRevert(VaultErrors.RedeemsSettlementCompleted.selector);
+        vault.settleRedeems(epoch, 1);
+    }
+
     /// @notice claim 应转出可领取资产并触发 Claimed
     function test_claim_transfersClaimableAssetsAndEmitsClaimed() public {
         uint256 amount = 100e6;
