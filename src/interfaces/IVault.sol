@@ -70,27 +70,6 @@ interface IVault {
     /// @param amount 划转金额
     function transferToExecutor(uint256 amount) external;
 
-    /// @notice 更新默认管理员地址，并迁移 DEFAULT_ADMIN_ROLE
-    /// @param newAdmin 新管理员地址
-    function setAdmin(address newAdmin) external;
-
-    /// @notice 更新运营地址，并迁移 OPERATOR_ROLE
-    /// @param newOperator 新运营地址
-    function setOperator(address newOperator) external;
-
-    /// @notice 更新执行钱包地址
-    /// @param newExecutor 新执行钱包地址
-    function setExecutor(address newExecutor) external;
-
-    /// @notice 暂停申购
-    function pauseDeposit() external;
-    /// @notice 恢复申购
-    function unpauseDeposit() external;
-    /// @notice 暂停赎回
-    function pauseRedeem() external;
-    /// @notice 恢复赎回
-    function unpauseRedeem() external;
-
     /// @notice 预约某个 epoch 生效的完整费用策略（费率+分账+收款地址）
     /// @param policy 收费策略快照
     /// @param effectiveEpoch 策略生效 epoch（要求按时间递增）

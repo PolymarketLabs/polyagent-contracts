@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity ^0.8.30;
 
-import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import {ERC20Upgradeable} from "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {IVault} from "./interfaces/IVault.sol";
+import {VaultAdmin} from "./VaultAdmin.sol";
+import {VaultEvents} from "./vault/VaultEvents.sol";
+import {VaultErrors} from "./vault/VaultErrors.sol";
 import {
     DepositRequest,
     RedeemRequest,
@@ -19,17 +21,12 @@ import {
     FeePolicy,
     FeePolicyCheckpoint
 } from "./vault/VaultTypes.sol";
-import {VaultEvents} from "./vault/VaultEvents.sol";
-import {VaultErrors} from "./vault/VaultErrors.sol";
 
-contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, IVault, VaultEvents, VaultErrors {
+contract Vault is ERC20Upgradeable, ReentrancyGuard, VaultAdmin, VaultEvents, VaultErrors, IVault {
     using SafeERC20 for IERC20;
     uint256 private constant NAV_SCALE = 1e18; // 采用 1e18 精度记录 NAV，避免与份额 decimals 耦合
     uint256 private constant BPS_DENOMINATOR = 10_000;
     uint256 private constant SECONDS_PER_YEAR = 365 days;
-
-    // ===== 角色常量 =====
-    bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
 
     // ===== 基础配置 =====
     address public baseAsset; // 基础资产地址（如 USDC）
@@ -37,15 +34,6 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, I
     uint256 public epoch0; // 初始化时刻对应的 epoch 起点
     uint256 public minDepositAmount; // 最小申购金额
     uint256 public minRedeemShares; // 最小赎回份额
-
-    // ===== 角色地址 =====
-    address public admin; // 默认管理员地址
-    address public operator; // 运营角色地址
-    address public executor; // 执行钱包
-
-    // ===== 运行状态 =====
-    bool public depositPaused; // 申购暂停开关
-    bool public redeemPaused; // 赎回暂停开关
 
     // ===== 用户请求与结算状态 =====
     mapping(address => uint256) public claimableAssets; // investor => 可领取基础资产
@@ -68,7 +56,7 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, I
     uint256 public lastFinalizedEpoch; // 最近一次完成封账的 epoch（首次封账前为 0）
 
     // ===== 升级预留 =====
-    uint256[100] private _gap;
+    uint256[100] private __gap;
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -391,87 +379,6 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, I
     }
 
     // ===== 管理员操作 =====
-
-    function setAdmin(address newAdmin) external override onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (newAdmin == address(0)) {
-            revert ZeroAddress();
-        }
-
-        address previousAdmin = admin;
-        if (newAdmin == previousAdmin) {
-            return;
-        }
-
-        _grantRole(DEFAULT_ADMIN_ROLE, newAdmin);
-        _revokeRole(DEFAULT_ADMIN_ROLE, previousAdmin);
-        admin = newAdmin;
-
-        emit AdminUpdated(previousAdmin, newAdmin);
-    }
-
-    function setOperator(address newOperator) external override onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (newOperator == address(0)) {
-            revert ZeroAddress();
-        }
-
-        address previousOperator = operator;
-        if (newOperator == previousOperator) {
-            return;
-        }
-
-        _grantRole(OPERATOR_ROLE, newOperator);
-        _revokeRole(OPERATOR_ROLE, previousOperator);
-        operator = newOperator;
-
-        emit OperatorUpdated(previousOperator, newOperator);
-    }
-
-    function setExecutor(address newExecutor) external override onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (newExecutor == address(0)) {
-            revert ZeroAddress();
-        }
-
-        address previousExecutor = executor;
-        if (newExecutor == previousExecutor) {
-            return;
-        }
-
-        executor = newExecutor;
-
-        emit ExecutorUpdated(previousExecutor, newExecutor);
-    }
-
-    function pauseDeposit() external override onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (depositPaused) {
-            revert DepositPaused();
-        }
-        depositPaused = true;
-        emit DepositPauseStatusUpdated(msg.sender, true);
-    }
-
-    function unpauseDeposit() external override onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (!depositPaused) {
-            revert DepositNotPaused();
-        }
-        depositPaused = false;
-        emit DepositPauseStatusUpdated(msg.sender, false);
-    }
-
-    function pauseRedeem() external override onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (redeemPaused) {
-            revert RedeemPaused();
-        }
-        redeemPaused = true;
-        emit RedeemPauseStatusUpdated(msg.sender, true);
-    }
-
-    function unpauseRedeem() external override onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (!redeemPaused) {
-            revert RedeemNotPaused();
-        }
-        redeemPaused = false;
-        emit RedeemPauseStatusUpdated(msg.sender, false);
-    }
 
     function scheduleFeePolicy(FeePolicy calldata policy, uint256 effectiveEpoch)
         external
