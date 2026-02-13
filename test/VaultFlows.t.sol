@@ -215,7 +215,8 @@ contract VaultFlowsTest is Test {
 
     /// @notice 未配置 fee policy 时，封账应回滚，避免进入不确定收费状态
     function test_flow_finalize_reverts_whenNoFeePolicyConfigured() public {
-        Vault localVault = Vault(_createFund(factory, address(usdc), manager, admin, operator, executor, SECONDS_PER_EPOCH));
+        Vault localVault =
+            Vault(_createFund(factory, address(usdc), manager, admin, operator, executor, SECONDS_PER_EPOCH));
         deal(address(localVault), manager, 100e18, true);
 
         vm.warp(block.timestamp + (2 * SECONDS_PER_EPOCH));
