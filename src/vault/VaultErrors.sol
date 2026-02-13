@@ -28,7 +28,12 @@ abstract contract VaultErrors {
     error NoClaimableFee();
     error InvalidEffectiveEpoch();
     error FeePolicyNotFound();
+    /// @notice 运营上报的 totalAum 小于当期净申购额，无法形成有效定价口径
+    error InvalidTotalAum();
+    /// @notice 申购队列已全部结算完成，无需继续调度 settleDeposits
     error DepositsSettlementCompleted();
+    /// @notice 赎回队列已全部结算完成，无需继续调度 settleRedeems
     error RedeemsSettlementCompleted();
+    /// @notice 批处理参数非法：maxCount 必须大于 0
     error InvalidMaxCount();
 }

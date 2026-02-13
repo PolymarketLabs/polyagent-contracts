@@ -377,7 +377,8 @@ contract VaultTest is Test {
         vm.prank(operator);
         vault.finalizeEpoch(epoch, totalAum);
 
-        uint256 expectedNavPerShare = (totalAum * 1e18) / sharesAtSettle;
+        uint256 expectedPricingAum = totalAum - vault.netRequestedDepositAssets(epoch);
+        uint256 expectedNavPerShare = (expectedPricingAum * 1e18) / sharesAtSettle;
         uint256 expectedAliceShares = (aliceAmount * 1e18) / expectedNavPerShare;
 
         vm.prank(operator);
@@ -590,6 +591,24 @@ contract VaultTest is Test {
         assertEq(storedShares, sharesAtSettle);
         assertEq(storedNav, expectedNavPerShare);
         assertEq(finalizedAt, block.timestamp);
+    }
+
+    /// @notice totalAum 小于当期净申购额时 finalizeEpoch 应回滚
+    function test_finalizeEpoch_reverts_whenTotalAumLessThanNetRequestedDeposits() public {
+        uint256 depositAmount = 100e6;
+        vm.prank(address(this));
+        usdc.transfer(alice, depositAmount);
+
+        vm.startPrank(alice);
+        usdc.approve(address(vault), depositAmount);
+        (uint256 epoch,) = vault.requestDeposit(depositAmount, address(0));
+        vm.stopPrank();
+
+        vm.warp(block.timestamp + (2 * SECONDS_PER_EPOCH));
+
+        vm.prank(operator);
+        vm.expectRevert(VaultErrors.InvalidTotalAum.selector);
+        vault.finalizeEpoch(epoch, depositAmount - 1);
     }
 
     function _deployFactory(address initialOwner) internal returns (VaultFactory localFactory) {

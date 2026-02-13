@@ -246,15 +246,25 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, I
             revert EpochAlreadyFinalized();
         }
 
+        // NAV 定价口径要扣除“本期待结算申购资金”，否则会抬高 NAV 并稀释新申购者。
+        uint256 pricingAum = totalAum;
+        uint256 epochNetDeposits = netRequestedDepositAssets[epoch];
+        if (epochNetDeposits > 0) {
+            if (pricingAum < epochNetDeposits) {
+                revert InvalidTotalAum();
+            }
+            pricingAum -= epochNetDeposits;
+        }
+
         uint256 sharesAtSettle = totalSupply();
-        uint256 navPerShare = sharesAtSettle == 0 ? NAV_SCALE : (totalAum * NAV_SCALE) / sharesAtSettle;
+        uint256 navPerShare = sharesAtSettle == 0 ? NAV_SCALE : (pricingAum * NAV_SCALE) / sharesAtSettle;
 
         // 固化该 epoch 结算口径（AUM、份额、NAV、封账时间）
         snapshots[epoch] = EpochSnapshot({
-            totalAum: totalAum, sharesAtSettle: sharesAtSettle, navPerShare: navPerShare, finalizedAt: block.timestamp
+            totalAum: pricingAum, sharesAtSettle: sharesAtSettle, navPerShare: navPerShare, finalizedAt: block.timestamp
         });
 
-        emit EpochFinalized(epoch, totalAum, sharesAtSettle, navPerShare);
+        emit EpochFinalized(epoch, pricingAum, sharesAtSettle, navPerShare);
     }
 
     function settleDeposits(uint256 epoch, uint256 maxCount) external override onlyRole(OPERATOR_ROLE) {
@@ -277,13 +287,14 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, I
         uint256 len = requests.length;
         uint256 start = cursor.nextDeposit;
 
-        // 空批次或已到队尾时直接标记完成
+        // 空批次或已到队尾：标记完成并显式 revert，便于脚本感知“无需继续调度”。
         if (start >= len) {
             cursor.depositsDone = true;
             revert DepositsSettlementCompleted();
         }
 
         uint256 navPerShare = snapshot.navPerShare;
+        // 若封账快照 NAV 非法（0），拒绝继续结算，避免除零或错误分配。
         if (navPerShare == 0) {
             revert InvalidFinalizeEpoch();
         }
@@ -332,13 +343,14 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, I
         uint256 len = requests.length;
         uint256 start = cursor.nextRedeem;
 
-        // 空批次或已到队尾时直接标记完成
+        // 空批次或已到队尾：标记完成并显式 revert，便于脚本感知“无需继续调度”。
         if (start >= len) {
             cursor.redeemsDone = true;
             revert RedeemsSettlementCompleted();
         }
 
         uint256 navPerShare = snapshot.navPerShare;
+        // 若封账快照 NAV 非法（0），拒绝继续结算，避免除零或错误分配。
         if (navPerShare == 0) {
             revert InvalidFinalizeEpoch();
         }
@@ -354,6 +366,7 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, I
                 continue;
             }
 
+            // 先按 NAV 计算可兑资产，再销毁已锁仓份额，资产通过 claimable 走 Pull 模式领取。
             uint256 assets = (req.shares * navPerShare) / NAV_SCALE;
             req.status = ReqStatus.Settled;
             _burn(address(this), req.shares);
