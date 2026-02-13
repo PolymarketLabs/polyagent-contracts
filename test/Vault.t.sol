@@ -959,6 +959,50 @@ contract VaultTest is Test {
         vault.finalizeEpoch(epoch, depositAmount - 1);
     }
 
+    /// @notice scheduleFeePolicy 在费率 bps 超过 10000 时应回滚
+    function test_scheduleFeePolicy_reverts_whenRateBpsExceedsDenominator() public {
+        FeePolicy memory policy = _zeroFeePolicy();
+        policy.rates.entryFeeBps = 10_001;
+        uint256 effectiveEpoch = vault.currentEpoch();
+
+        vm.prank(admin);
+        vm.expectRevert(VaultErrors.InvalidBps.selector);
+        vault.scheduleFeePolicy(policy, effectiveEpoch);
+    }
+
+    /// @notice scheduleFeePolicy 在 split 总和超过 10000 时应回滚
+    function test_scheduleFeePolicy_reverts_whenSplitSumExceedsDenominator() public {
+        FeePolicy memory policy = _zeroFeePolicy();
+        policy.entrySplit = SplitConfig({platformBps: 5000, referrerBps: 3000, managerBps: 3001});
+        uint256 effectiveEpoch = vault.currentEpoch();
+
+        vm.prank(admin);
+        vm.expectRevert(VaultErrors.InvalidSplit.selector);
+        vault.scheduleFeePolicy(policy, effectiveEpoch);
+    }
+
+    /// @notice reserve 收款地址为必填，缺失时 scheduleFeePolicy 应回滚
+    function test_scheduleFeePolicy_reverts_whenReserveRecipientMissing() public {
+        FeePolicy memory policy = _zeroFeePolicy();
+        policy.recipients.reserve = address(0);
+        uint256 effectiveEpoch = vault.currentEpoch();
+
+        vm.prank(admin);
+        vm.expectRevert(VaultErrors.ZeroAddress.selector);
+        vault.scheduleFeePolicy(policy, effectiveEpoch);
+    }
+
+    /// @notice 激活费率下存在平台分账但 platform 收款地址为空，scheduleFeePolicy 应回滚
+    function test_scheduleFeePolicy_reverts_whenActiveSplitHasPlatformShareButPlatformMissing() public {
+        FeePolicy memory policy = _entryFeePolicy();
+        policy.recipients.platform = address(0);
+        uint256 effectiveEpoch = vault.currentEpoch();
+
+        vm.prank(admin);
+        vm.expectRevert(VaultErrors.ZeroAddress.selector);
+        vault.scheduleFeePolicy(policy, effectiveEpoch);
+    }
+
     function _deployFactory(address initialOwner) internal returns (VaultFactory localFactory) {
         Vault implementation = new Vault();
         UpgradeableBeacon beacon = new UpgradeableBeacon(address(implementation), beaconOwner);
