@@ -6,6 +6,7 @@ import {ERC20Upgradeable} from "@openzeppelin/contracts-upgradeable/token/ERC20/
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {IVault} from "./interfaces/IVault.sol";
 import {
     DepositRequest,
@@ -25,6 +26,7 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, I
     using SafeERC20 for IERC20;
     uint256 private constant NAV_SCALE = 1e18; // 采用 1e18 精度记录 NAV，避免与份额 decimals 耦合
     uint256 private constant BPS_DENOMINATOR = 10_000;
+    uint256 private constant SECONDS_PER_YEAR = 365 days;
 
     // ===== 角色常量 =====
     bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
@@ -63,6 +65,7 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, I
     FeePolicyCheckpoint[] private feePolicyCheckpoints; // 按生效 epoch 递增存储的策略检查点
     mapping(address => address) public referrers; // 投资者 -> 推荐人（首绑生效）
     mapping(address => uint256) public feeClaimable; // 收款方可领取费用余额
+    uint256 public lastFinalizedEpoch; // 最近一次完成封账的 epoch（首次封账前为 0）
 
     // ===== 升级预留 =====
     uint256[100] private _gap;
@@ -240,10 +243,18 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, I
         if (epoch >= current) {
             revert InvalidFinalizeEpoch();
         }
+        // 已经封过账了，禁止重复处理
+        if (epoch <= lastFinalizedEpoch) {
+            revert InvalidFinalizeEpoch();
+        }
         // 同一 epoch 只允许封账一次
         if (snapshots[epoch].finalizedAt != 0) {
             revert EpochAlreadyFinalized();
         }
+
+        // 管理费按“当前封账 epoch 与上次封账 epoch 的跨度”计提；首次封账按与 epoch0 的跨度计提。
+        uint256 deltaEpochs = lastFinalizedEpoch == 0 ? epoch - epoch0 : epoch - lastFinalizedEpoch;
+        uint256 deltaSeconds = deltaEpochs * secondsPerEpoch;
 
         // NAV 定价口径要扣除“本期待结算申购资金”，否则会抬高 NAV 并稀释新申购者。
         uint256 pricingAum = totalAum;
@@ -256,12 +267,17 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, I
         }
 
         uint256 sharesAtSettle = totalSupply();
-        uint256 navPerShare = sharesAtSettle == 0 ? NAV_SCALE : (pricingAum * NAV_SCALE) / sharesAtSettle;
+        FeePolicy memory policy = _getFeePolicyForEpoch(epoch);
+        // 封账阶段先计提“管理费 -> 业绩报酬”，再用扣费后的 AUM 计算 NAV。
+        pricingAum = _applyEpochLevelFees(pricingAum, sharesAtSettle, policy, deltaSeconds);
+
+        uint256 navPerShare = sharesAtSettle == 0 ? NAV_SCALE : Math.mulDiv(pricingAum, NAV_SCALE, sharesAtSettle);
 
         // 固化该 epoch 结算口径（AUM、份额、NAV、封账时间）
         snapshots[epoch] = EpochSnapshot({
             totalAum: pricingAum, sharesAtSettle: sharesAtSettle, navPerShare: navPerShare, finalizedAt: block.timestamp
         });
+        lastFinalizedEpoch = epoch;
 
         emit EpochFinalized(epoch, pricingAum, sharesAtSettle, navPerShare);
     }
@@ -462,6 +478,37 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, I
         revert FeePolicyNotFound();
     }
 
+    function _applyEpochLevelFees(uint256 pricingAum, uint256 sharesAtSettle, FeePolicy memory policy, uint256 deltaSeconds)
+        internal
+        returns (uint256 pricingAumAfterFee)
+    {
+        // 管理费按 epoch 时长从年化费率折算。
+        uint256 mgmtFee = _calcMgmtFee(pricingAum, policy.rates.mgmtFeeAnnualBps, deltaSeconds);
+        if (mgmtFee > pricingAum) {
+            mgmtFee = pricingAum;
+        }
+
+        uint256 aumAfterMgmt = pricingAum - mgmtFee;
+
+        // 业绩报酬以“管理费后 NAV 相对高水位的超额收益”计提。
+        uint256 performanceFee = _calcPerformanceFee(aumAfterMgmt, sharesAtSettle, policy.rates.performanceFeeBps);
+        if (performanceFee > aumAfterMgmt) {
+            performanceFee = aumAfterMgmt;
+        }
+
+        pricingAumAfterFee = aumAfterMgmt - performanceFee;
+
+        if (mgmtFee > 0) {
+            _accrueFeeBySplit(policy.recipients, policy.mgmtSplit, address(0), mgmtFee);
+        }
+        if (performanceFee > 0) {
+            _accrueFeeBySplit(policy.recipients, policy.performanceSplit, address(0), performanceFee);
+        }
+
+        // 高水位使用“封账后净 NAV”更新，确保下一期只对新增超额收益收费。
+        _updateHighWaterMark(pricingAumAfterFee, sharesAtSettle);
+    }
+
     function _settleDepositRequest(
         uint256 epoch,
         uint256 requestIndex,
@@ -521,6 +568,7 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, I
         address managerRecipient = recipients.manager;
         address reserveRecipient = recipients.reserve;
         address referrerRecipient = referrers[investor];
+        // 无推荐人时，推荐人份额回流 reserve。
         if (referrerRecipient == address(0)) {
             referrerRecipient = reserveRecipient;
         }
@@ -542,6 +590,55 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, I
 
         fee = (amount * feeBps) / BPS_DENOMINATOR;
         netAmount = amount - fee;
+    }
+
+    function _calcMgmtFee(uint256 pricingAum, uint16 mgmtFeeAnnualBps, uint256 deltaSeconds)
+        internal
+        pure
+        returns (uint256 fee)
+    {
+        if (pricingAum == 0 || mgmtFeeAnnualBps == 0 || deltaSeconds == 0) {
+            return 0;
+        }
+
+        // fee = AUM * annualBps * deltaSeconds / (10000 * 365 days)
+        uint256 annualBpsTimesDelta = uint256(mgmtFeeAnnualBps) * deltaSeconds;
+        fee = Math.mulDiv(pricingAum, annualBpsTimesDelta, BPS_DENOMINATOR * SECONDS_PER_YEAR);
+    }
+
+    function _calcPerformanceFee(uint256 pricingAum, uint256 sharesAtSettle, uint16 performanceFeeBps)
+        internal
+        view
+        returns (uint256 fee)
+    {
+        if (pricingAum == 0 || sharesAtSettle == 0 || performanceFeeBps == 0) {
+            return 0;
+        }
+        // 尚未形成高水位基线时不收业绩报酬。
+        if (highWaterMarkNav == 0) {
+            return 0;
+        }
+
+        uint256 navPerShareBeforePerformanceFee = Math.mulDiv(pricingAum, NAV_SCALE, sharesAtSettle);
+        if (navPerShareBeforePerformanceFee <= highWaterMarkNav) {
+            return 0;
+        }
+
+        uint256 gainPerShare = navPerShareBeforePerformanceFee - highWaterMarkNav;
+        uint256 gainAum = Math.mulDiv(gainPerShare, sharesAtSettle, NAV_SCALE);
+        fee = Math.mulDiv(gainAum, performanceFeeBps, BPS_DENOMINATOR);
+    }
+
+    function _updateHighWaterMark(uint256 pricingAum, uint256 sharesAtSettle) internal {
+        if (sharesAtSettle == 0) {
+            return;
+        }
+
+        // 高水位单调不降。
+        uint256 navPerShare = Math.mulDiv(pricingAum, NAV_SCALE, sharesAtSettle);
+        if (navPerShare > highWaterMarkNav) {
+            highWaterMarkNav = navPerShare;
+        }
     }
 
     function _splitFee(uint256 fee, SplitConfig memory splitConfig)

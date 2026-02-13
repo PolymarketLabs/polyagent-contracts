@@ -32,6 +32,9 @@ contract VaultFlowsTest is Test {
 
         factory = _deployFactory(owner);
         vault = Vault(_createFund(factory, address(usdc), manager, admin, operator, executor, SECONDS_PER_EPOCH));
+
+        vm.prank(admin);
+        vault.scheduleFeePolicy(_zeroFeePolicy(), 0);
     }
 
     /// @notice 端到端：申购 -> 封账 -> 申购结算

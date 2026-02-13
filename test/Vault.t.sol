@@ -39,6 +39,9 @@ contract VaultTest is Test {
 
         factory = _deployFactory(owner);
         vault = Vault(_createFund(factory, address(usdc), manager, admin, operator, executor, SECONDS_PER_EPOCH));
+
+        vm.prank(admin);
+        vault.scheduleFeePolicy(_zeroFeePolicy(), 0);
     }
 
     /// @notice 验证初始化后 secondsPerEpoch 被正确写入
@@ -597,6 +600,105 @@ contract VaultTest is Test {
         assertEq(vault.feeClaimableOf(executor), 0);
     }
 
+    /// @notice finalizeEpoch 应按年化管理费率按期计提，并将费用分账记入 feeClaimable
+    function test_finalizeEpoch_appliesManagementFeeAndAccruesFeeClaimable() public {
+        uint256 managerShares = 100e18;
+        uint256 totalAum = 1_000_000e6;
+        deal(address(vault), manager, managerShares, true);
+
+        vm.warp(block.timestamp + (2 * SECONDS_PER_EPOCH));
+        uint256 epoch = vault.currentEpoch() - 1;
+
+        vm.prank(admin);
+        vault.scheduleFeePolicy(_mgmtFeePolicy(), epoch);
+
+        vm.prank(operator);
+        vault.finalizeEpoch(epoch, totalAum);
+
+        uint256 mgmtFee = (totalAum * 365 * SECONDS_PER_EPOCH) / (10_000 * 365 days);
+        uint256 expectedPricingAum = totalAum - mgmtFee;
+        uint256 expectedNav = (expectedPricingAum * 1e18) / managerShares;
+
+        (uint256 storedAum,, uint256 storedNav,) = vault.snapshots(epoch);
+        assertEq(storedAum, expectedPricingAum);
+        assertEq(storedNav, expectedNav);
+        assertEq(vault.highWaterMarkNav(), expectedNav);
+        assertEq(vault.feeClaimableOf(admin), (mgmtFee * 3000) / 10_000);
+        assertEq(vault.feeClaimableOf(manager), (mgmtFee * 7000) / 10_000);
+        assertEq(vault.feeClaimableOf(executor), 0);
+    }
+
+    /// @notice 若跨多个 epoch 才再次封账，管理费应按与上次封账间隔秒数计提
+    function test_finalizeEpoch_appliesManagementFeeByGapFromLastFinalizedEpoch() public {
+        uint256 managerShares = 100e18;
+        uint256 totalAum = 1_000_000e6;
+        deal(address(vault), manager, managerShares, true);
+
+        uint256 epoch1 = vault.currentEpoch();
+        vm.prank(admin);
+        vault.scheduleFeePolicy(_mgmtFeePolicy(), epoch1);
+
+        // 首次封账：按当前实现，deltaEpochs = epoch - epoch0，此场景下为 0。
+        vm.warp(block.timestamp + (2 * SECONDS_PER_EPOCH));
+        vm.prank(operator);
+        vault.finalizeEpoch(epoch1, totalAum);
+
+        // 第二次封账：跳过一个 epoch，按 2 个 epoch 计提
+        vm.warp(block.timestamp + (2 * SECONDS_PER_EPOCH));
+        uint256 epoch3 = epoch1 + 2;
+        vm.prank(operator);
+        vault.finalizeEpoch(epoch3, totalAum);
+
+        uint256 firstMgmtFee = 0;
+        uint256 secondMgmtFee = (totalAum * 365 * (2 * SECONDS_PER_EPOCH)) / (10_000 * 365 days);
+
+        (uint256 storedAum3,, uint256 storedNav3,) = vault.snapshots(epoch3);
+        assertEq(storedAum3, totalAum - secondMgmtFee);
+        assertEq(storedNav3, ((totalAum - secondMgmtFee) * 1e18) / managerShares);
+        assertEq(vault.lastFinalizedEpoch(), epoch3);
+
+        uint256 totalMgmtFee = firstMgmtFee + secondMgmtFee;
+        assertEq(vault.feeClaimableOf(admin), (totalMgmtFee * 3000) / 10_000);
+        assertEq(vault.feeClaimableOf(manager), (totalMgmtFee * 7000) / 10_000);
+        assertEq(vault.feeClaimableOf(executor), 0);
+    }
+
+    /// @notice 业绩报酬仅在 NAV 超过高水位时收取，并在封账后更新高水位
+    function test_finalizeEpoch_appliesPerformanceFeeAboveHighWaterMark() public {
+        uint256 managerShares = 100e18;
+        deal(address(vault), manager, managerShares, true);
+
+        uint256 epoch1 = vault.currentEpoch();
+        vm.prank(admin);
+        vault.scheduleFeePolicy(_performanceFeePolicy(), epoch1);
+
+        vm.warp(block.timestamp + (2 * SECONDS_PER_EPOCH));
+        vm.prank(operator);
+        vault.finalizeEpoch(epoch1, 500e6);
+
+        assertEq(vault.feeClaimableOf(manager), 0);
+        (,, uint256 nav1,) = vault.snapshots(epoch1);
+        assertEq(vault.highWaterMarkNav(), nav1);
+
+        vm.warp(block.timestamp + SECONDS_PER_EPOCH);
+        uint256 epoch2 = epoch1 + 1;
+
+        vm.prank(operator);
+        vault.finalizeEpoch(epoch2, 700e6);
+
+        uint256 performanceFee = (200e6 * 2000) / 10_000;
+        uint256 expectedPricingAumEpoch2 = 700e6 - performanceFee;
+        uint256 expectedNavEpoch2 = (expectedPricingAumEpoch2 * 1e18) / managerShares;
+
+        (uint256 storedAum2,, uint256 storedNav2,) = vault.snapshots(epoch2);
+        assertEq(storedAum2, expectedPricingAumEpoch2);
+        assertEq(storedNav2, expectedNavEpoch2);
+        assertEq(vault.highWaterMarkNav(), expectedNavEpoch2);
+        assertEq(vault.feeClaimableOf(manager), performanceFee);
+        assertEq(vault.feeClaimableOf(admin), 0);
+        assertEq(vault.feeClaimableOf(executor), 0);
+    }
+
     /// @notice 非 operator 调用 transferToExecutor 应回滚
     function test_transferToExecutor_reverts_whenCalledByNonOperator() public {
         vm.prank(alice);
@@ -702,7 +804,7 @@ contract VaultTest is Test {
         vault.finalizeEpoch(epoch, 100e6);
 
         vm.prank(operator);
-        vm.expectRevert(VaultErrors.EpochAlreadyFinalized.selector);
+        vm.expectRevert(VaultErrors.InvalidFinalizeEpoch.selector);
         vault.finalizeEpoch(epoch, 200e6);
     }
 
@@ -790,6 +892,28 @@ contract VaultTest is Test {
             rates: FeeRateConfig({entryFeeBps: 0, exitFeeBps: 1000, mgmtFeeAnnualBps: 0, performanceFeeBps: 0}),
             entrySplit: SplitConfig({platformBps: 0, referrerBps: 0, managerBps: 10_000}),
             exitSplit: SplitConfig({platformBps: 3000, referrerBps: 2000, managerBps: 5000}),
+            mgmtSplit: SplitConfig({platformBps: 0, referrerBps: 0, managerBps: 10_000}),
+            performanceSplit: SplitConfig({platformBps: 0, referrerBps: 0, managerBps: 10_000}),
+            recipients: FeeRecipientConfig({platform: admin, manager: manager, reserve: executor})
+        });
+    }
+
+    function _mgmtFeePolicy() internal view returns (FeePolicy memory policy) {
+        policy = FeePolicy({
+            rates: FeeRateConfig({entryFeeBps: 0, exitFeeBps: 0, mgmtFeeAnnualBps: 365, performanceFeeBps: 0}),
+            entrySplit: SplitConfig({platformBps: 0, referrerBps: 0, managerBps: 10_000}),
+            exitSplit: SplitConfig({platformBps: 0, referrerBps: 0, managerBps: 10_000}),
+            mgmtSplit: SplitConfig({platformBps: 3000, referrerBps: 0, managerBps: 7000}),
+            performanceSplit: SplitConfig({platformBps: 0, referrerBps: 0, managerBps: 10_000}),
+            recipients: FeeRecipientConfig({platform: admin, manager: manager, reserve: executor})
+        });
+    }
+
+    function _performanceFeePolicy() internal view returns (FeePolicy memory policy) {
+        policy = FeePolicy({
+            rates: FeeRateConfig({entryFeeBps: 0, exitFeeBps: 0, mgmtFeeAnnualBps: 0, performanceFeeBps: 2000}),
+            entrySplit: SplitConfig({platformBps: 0, referrerBps: 0, managerBps: 10_000}),
+            exitSplit: SplitConfig({platformBps: 0, referrerBps: 0, managerBps: 10_000}),
             mgmtSplit: SplitConfig({platformBps: 0, referrerBps: 0, managerBps: 10_000}),
             performanceSplit: SplitConfig({platformBps: 0, referrerBps: 0, managerBps: 10_000}),
             recipients: FeeRecipientConfig({platform: admin, manager: manager, reserve: executor})
