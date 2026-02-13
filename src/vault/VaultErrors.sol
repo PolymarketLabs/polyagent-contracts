@@ -10,8 +10,10 @@ abstract contract VaultErrors {
     error NotRequestOwner();
     /// @notice 请求状态不允许执行当前操作（例如已结算/已撤销）
     error InvalidRequestStatus();
-    /// @notice 目标 epoch 已封账，不允许再撤销请求
+    /// @notice 目标 epoch 已封账，不允许再撤销请求或重复封账
     error EpochAlreadyFinalized();
+    /// @notice 封账目标 epoch 非历史 epoch（当前或未来）
+    error InvalidFinalizeEpoch();
     error DepositPaused();
     error DepositNotPaused();
     error RedeemPaused();
@@ -26,4 +28,12 @@ abstract contract VaultErrors {
     error NoClaimableFee();
     error InvalidEffectiveEpoch();
     error FeePolicyNotFound();
+    /// @notice 运营上报的 totalAum 小于当期净申购额，无法形成有效定价口径
+    error InvalidTotalAum();
+    /// @notice 申购队列已全部结算完成，无需继续调度 settleDeposits
+    error DepositsSettlementCompleted();
+    /// @notice 赎回队列已全部结算完成，无需继续调度 settleRedeems
+    error RedeemsSettlementCompleted();
+    /// @notice 批处理参数非法：maxCount 必须大于 0
+    error InvalidMaxCount();
 }
