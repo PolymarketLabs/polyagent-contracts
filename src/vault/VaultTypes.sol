@@ -57,14 +57,12 @@ struct DepositRequest {
     address investor;
     uint256 amount;
     ReqStatus status;
-    uint256 epoch; // 请求发起时的epoch
 }
 
 struct RedeemRequest {
     address investor;
     uint256 shares;
     ReqStatus status;
-    uint256 epoch;
 }
 
 struct EpochSnapshot {

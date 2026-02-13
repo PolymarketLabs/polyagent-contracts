@@ -47,6 +47,9 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, I
 
     mapping(uint256 => DepositRequest[]) public depositRequests; // epoch => 申购请求列表
     mapping(uint256 => RedeemRequest[]) public redeemRequests; // epoch => 赎回请求列表
+    
+    mapping(uint256 => uint256) public netRequestedDepositAssets; // epoch => 净申购总资产
+    mapping(uint256 => uint256) public netRequestedRedeemShares; // epoch => 净赎回总份额
 
     mapping(uint256 => EpochSnapshot) public snapshots; // epoch => 封账快照
 
@@ -59,7 +62,7 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, I
     mapping(address => uint256) public feeClaimable; // 收款方可领取费用余额
 
     // ===== 升级预留 =====
-    uint256[96] private _gap;
+    uint256[100] private _gap;
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -124,8 +127,9 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, I
 
         // 按严格 CEI：先写入状态，再进行外部交互
         depositRequests[epoch].push(
-            DepositRequest({investor: msg.sender, amount: amount, status: ReqStatus.Pending, epoch: epoch})
+            DepositRequest({investor: msg.sender, amount: amount, status: ReqStatus.Pending})
         );
+        netRequestedDepositAssets[epoch] += amount;
 
         // 外部交互放在最后；若转账失败，整笔交易回滚，已写状态不会保留
         IERC20(baseAsset).safeTransferFrom(msg.sender, address(this), amount);
@@ -151,8 +155,9 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, I
 
         // 请求入队，后续由结算流程统一处理
         redeemRequests[epoch].push(
-            RedeemRequest({investor: msg.sender, shares: shares, status: ReqStatus.Pending, epoch: epoch})
+            RedeemRequest({investor: msg.sender, shares: shares, status: ReqStatus.Pending})
         );
+        netRequestedRedeemShares[epoch] += shares;
 
         emit RedeemRequested(epoch, index, msg.sender, shares);
     }
@@ -175,6 +180,8 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, I
 
         // 先更新状态再退款，遵循 CEI
         req.status = ReqStatus.Canceled;
+        netRequestedDepositAssets[epoch] -= req.amount;
+
         IERC20(baseAsset).safeTransfer(msg.sender, req.amount);
 
         emit DepositCanceled(epoch, index, msg.sender, req.amount);
@@ -198,6 +205,8 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, I
 
         // 先更新状态再解锁份额
         req.status = ReqStatus.Canceled;
+        netRequestedRedeemShares[epoch] -= req.shares;
+
         _transfer(address(this), msg.sender, req.shares);
 
         emit RedeemCanceled(epoch, index, msg.sender, req.shares);
@@ -224,6 +233,10 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, I
 
     function finalizeEpoch(uint256 epoch, uint256 totalAum) external override onlyRole(OPERATOR_ROLE) {
         uint256 current = _currentEpoch();
+        // 尚未初始化的时期，无账可封
+        if (epoch < epoch0) {
+            revert InvalidFinalizeEpoch();
+        }
         // 仅允许封账历史 epoch，当前/未来 epoch 结算口径尚未闭合
         if (epoch >= current) {
             revert InvalidFinalizeEpoch();
@@ -234,7 +247,7 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, I
         }
 
         uint256 sharesAtSettle = totalSupply();
-        uint256 navPerShare = sharesAtSettle == 0 ? 0 : (totalAum * NAV_SCALE) / sharesAtSettle;
+        uint256 navPerShare = sharesAtSettle == 0 ? NAV_SCALE : (totalAum * NAV_SCALE) / sharesAtSettle;
 
         // 固化该 epoch 结算口径（AUM、份额、NAV、封账时间）
         snapshots[epoch] = EpochSnapshot({

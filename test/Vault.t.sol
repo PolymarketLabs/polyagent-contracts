@@ -14,7 +14,7 @@ import {VaultFactory} from "../src/VaultFactory.sol";
 contract VaultTest is Test {
     uint256 public constant INITIAL_TIMESTAMP = 1767225600; // 2026-01-01 00:00:00 UTC
     uint256 public constant SECONDS_PER_EPOCH = 86400;
-    uint256 internal constant SNAPSHOTS_MAPPING_SLOT = 11; // Vault.snapshots 的映射槽位（需与 Vault 存储布局保持一致）
+    uint256 internal constant SNAPSHOTS_MAPPING_SLOT = 13; // Vault.snapshots 的映射槽位（需与 Vault 存储布局保持一致）
     uint256 internal constant CLAIMABLE_ASSETS_MAPPING_SLOT = 8; // Vault.claimableAssets 的映射槽位（需与 Vault 存储布局保持一致）
 
     USDC public usdc;
@@ -157,12 +157,10 @@ contract VaultTest is Test {
         vm.prank(alice);
         (uint256 epoch, uint256 index) = vault.requestDeposit(amount, bob);
 
-        (address investor, uint256 recordedAmount, ReqStatus status, uint256 recordedEpoch) =
-            vault.depositRequests(epoch, index);
+        (address investor, uint256 recordedAmount, ReqStatus status) = vault.depositRequests(epoch, index);
         assertEq(investor, alice);
         assertEq(recordedAmount, amount);
         assertEq(uint8(status), uint8(ReqStatus.Pending));
-        assertEq(recordedEpoch, epoch);
         assertEq(usdc.balanceOf(address(vault)), amount);
         assertEq(vault.referrerOf(alice), bob);
     }
@@ -211,12 +209,10 @@ contract VaultTest is Test {
         vm.prank(alice);
         (uint256 epoch, uint256 index) = vault.requestRedeem(shares);
 
-        (address investor, uint256 recordedShares, ReqStatus status, uint256 recordedEpoch) =
-            vault.redeemRequests(epoch, index);
+        (address investor, uint256 recordedShares, ReqStatus status) = vault.redeemRequests(epoch, index);
         assertEq(investor, alice);
         assertEq(recordedShares, shares);
         assertEq(uint8(status), uint8(ReqStatus.Pending));
-        assertEq(recordedEpoch, epoch);
         assertEq(vault.balanceOf(alice), 0);
         assertEq(vault.balanceOf(address(vault)), shares);
     }
@@ -240,12 +236,10 @@ contract VaultTest is Test {
         vault.cancelDeposit(epoch, index);
         vm.stopPrank();
 
-        (address investor, uint256 recordedAmount, ReqStatus status, uint256 recordedEpoch) =
-            vault.depositRequests(epoch, index);
+        (address investor, uint256 recordedAmount, ReqStatus status) = vault.depositRequests(epoch, index);
         assertEq(investor, alice);
         assertEq(recordedAmount, amount);
         assertEq(uint8(status), uint8(ReqStatus.Canceled));
-        assertEq(recordedEpoch, epoch);
         assertEq(usdc.balanceOf(alice), amount);
         assertEq(usdc.balanceOf(address(vault)), 0);
     }
@@ -297,12 +291,10 @@ contract VaultTest is Test {
         vault.cancelRedeem(epoch, index);
         vm.stopPrank();
 
-        (address investor, uint256 recordedShares, ReqStatus status, uint256 recordedEpoch) =
-            vault.redeemRequests(epoch, index);
+        (address investor, uint256 recordedShares, ReqStatus status) = vault.redeemRequests(epoch, index);
         assertEq(investor, alice);
         assertEq(recordedShares, shares);
         assertEq(uint8(status), uint8(ReqStatus.Canceled));
-        assertEq(recordedEpoch, epoch);
         assertEq(vault.balanceOf(alice), shares);
         assertEq(vault.balanceOf(address(vault)), 0);
     }
@@ -414,6 +406,7 @@ contract VaultTest is Test {
 
     /// @notice 同一 epoch 二次封账应回滚
     function test_finalizeEpoch_reverts_whenCalledTwiceForSameEpoch() public {
+        vm.warp(block.timestamp + (2 * SECONDS_PER_EPOCH));
         uint256 epoch = vault.currentEpoch() - 1;
         vm.prank(operator);
         vault.finalizeEpoch(epoch, 100e6);
@@ -427,6 +420,7 @@ contract VaultTest is Test {
     function test_finalizeEpoch_storesSnapshotAndEmitsEvent() public {
         uint256 sharesAtSettle = 200e18;
         uint256 totalAum = 500e6;
+        vm.warp(block.timestamp + (2 * SECONDS_PER_EPOCH));
         uint256 epoch = vault.currentEpoch() - 1;
         uint256 expectedNavPerShare = (totalAum * 1e18) / sharesAtSettle;
 
