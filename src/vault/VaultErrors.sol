@@ -15,7 +15,6 @@ abstract contract VaultErrors {
     error InvalidFinalizeEpoch();
     error InvalidBps();
     error InvalidSplit();
-    error ReferrerAlreadyBound();
     error SelfReferral();
     error CircularReferral();
     /// @notice 无可领取资产
