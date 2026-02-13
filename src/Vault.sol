@@ -392,19 +392,42 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, I
 
     // ===== 管理员操作 =====
 
-    function pauseDeposit() external override onlyRole(DEFAULT_ADMIN_ROLE) {}
+    function pauseDeposit() external override onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (depositPaused) {
+            revert DepositPaused();
+        }
+        depositPaused = true;
+    }
 
-    function unpauseDeposit() external override onlyRole(DEFAULT_ADMIN_ROLE) {}
+    function unpauseDeposit() external override onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (!depositPaused) {
+            revert DepositNotPaused();
+        }
+        depositPaused = false;
+    }
 
-    function pauseRedeem() external override onlyRole(DEFAULT_ADMIN_ROLE) {}
+    function pauseRedeem() external override onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (redeemPaused) {
+            revert RedeemPaused();
+        }
+        redeemPaused = true;
+    }
 
-    function unpauseRedeem() external override onlyRole(DEFAULT_ADMIN_ROLE) {}
+    function unpauseRedeem() external override onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (!redeemPaused) {
+            revert RedeemNotPaused();
+        }
+        redeemPaused = false;
+    }
 
     function scheduleFeePolicy(FeePolicy calldata policy, uint256 effectiveEpoch)
         external
         override
         onlyRole(DEFAULT_ADMIN_ROLE)
     {
+        // 配置落盘前先做结构化校验，避免无效策略进入 checkpoint。
+        _validateFeePolicy(policy);
+
         uint256 checkpointsLen = feePolicyCheckpoints.length;
         if (checkpointsLen > 0 && effectiveEpoch <= feePolicyCheckpoints[checkpointsLen - 1].effectiveEpoch) {
             revert InvalidEffectiveEpoch();
@@ -476,6 +499,63 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, I
             }
         }
         revert FeePolicyNotFound();
+    }
+
+    function _validateFeePolicy(FeePolicy calldata policy) internal pure {
+        // reserve 作为统一兜底收款地址（无推荐人分成 + rounding remainder），必须始终存在。
+        if (policy.recipients.reserve == address(0)) {
+            revert ZeroAddress();
+        }
+
+        _validateBps(policy.rates.entryFeeBps);
+        _validateBps(policy.rates.exitFeeBps);
+        _validateBps(policy.rates.mgmtFeeAnnualBps);
+        _validateBps(policy.rates.performanceFeeBps);
+
+        _validateSplit(policy.entrySplit);
+        _validateSplit(policy.exitSplit);
+        _validateSplit(policy.mgmtSplit);
+        _validateSplit(policy.performanceSplit);
+
+        _validateRecipientsForActiveSplit(policy.recipients, policy.entrySplit, policy.rates.entryFeeBps);
+        _validateRecipientsForActiveSplit(policy.recipients, policy.exitSplit, policy.rates.exitFeeBps);
+        _validateRecipientsForActiveSplit(policy.recipients, policy.mgmtSplit, policy.rates.mgmtFeeAnnualBps);
+        _validateRecipientsForActiveSplit(policy.recipients, policy.performanceSplit, policy.rates.performanceFeeBps);
+    }
+
+    function _validateBps(uint16 bps) internal pure {
+        if (bps > BPS_DENOMINATOR) {
+            revert InvalidBps();
+        }
+    }
+
+    function _validateSplit(SplitConfig calldata splitConfig) internal pure returns (uint256 sum) {
+        _validateBps(splitConfig.platformBps);
+        _validateBps(splitConfig.referrerBps);
+        _validateBps(splitConfig.managerBps);
+
+        sum = uint256(splitConfig.platformBps) + uint256(splitConfig.referrerBps) + uint256(splitConfig.managerBps);
+        if (sum > BPS_DENOMINATOR) {
+            revert InvalidSplit();
+        }
+    }
+
+    function _validateRecipientsForActiveSplit(
+        FeeRecipientConfig calldata recipients,
+        SplitConfig calldata splitConfig,
+        uint16 feeRateBps
+    ) internal pure {
+        // 仅在该类费用启用时校验对应收款地址，未启用的费率允许地址暂未配置。
+        if (feeRateBps == 0) {
+            return;
+        }
+
+        if (splitConfig.platformBps > 0 && recipients.platform == address(0)) {
+            revert ZeroAddress();
+        }
+        if (splitConfig.managerBps > 0 && recipients.manager == address(0)) {
+            revert ZeroAddress();
+        }
     }
 
     function _applyEpochLevelFees(

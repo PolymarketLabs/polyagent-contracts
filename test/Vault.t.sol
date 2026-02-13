@@ -227,6 +227,35 @@ contract VaultTest is Test {
         vault.requestRedeem(0);
     }
 
+    /// @notice 申购暂停期间，requestDeposit 应回滚
+    function test_requestDeposit_reverts_whenDepositPaused() public {
+        uint256 amount = 100e6;
+        vm.prank(address(this));
+        usdc.transfer(alice, amount);
+
+        vm.prank(admin);
+        vault.pauseDeposit();
+
+        vm.startPrank(alice);
+        usdc.approve(address(vault), amount);
+        vm.expectRevert(VaultErrors.DepositPaused.selector);
+        vault.requestDeposit(amount, address(0));
+        vm.stopPrank();
+    }
+
+    /// @notice 赎回暂停期间，requestRedeem 应回滚
+    function test_requestRedeem_reverts_whenRedeemPaused() public {
+        uint256 shares = 10e18;
+        deal(address(vault), alice, shares, true);
+
+        vm.prank(admin);
+        vault.pauseRedeem();
+
+        vm.prank(alice);
+        vm.expectRevert(VaultErrors.RedeemPaused.selector);
+        vault.requestRedeem(shares);
+    }
+
     /// @notice 撤销申购后应退款并标记 Canceled
     function test_cancelDeposit_returnsBaseAssetAndMarksCanceled() public {
         uint256 amount = 100e6;
@@ -746,6 +775,64 @@ contract VaultTest is Test {
         assertEq(usdc.balanceOf(executor), beforeExecutor + amount);
     }
 
+    /// @notice 仅 admin 可切换申购暂停状态，重复切换应回滚
+    function test_pauseDeposit_onlyAdminCanToggle() public {
+        assertFalse(vault.depositPaused());
+
+        vm.prank(alice);
+        vm.expectRevert();
+        vault.pauseDeposit();
+
+        vm.prank(admin);
+        vault.pauseDeposit();
+        assertTrue(vault.depositPaused());
+
+        vm.prank(admin);
+        vm.expectRevert(VaultErrors.DepositPaused.selector);
+        vault.pauseDeposit();
+
+        vm.prank(alice);
+        vm.expectRevert();
+        vault.unpauseDeposit();
+
+        vm.prank(admin);
+        vault.unpauseDeposit();
+        assertFalse(vault.depositPaused());
+
+        vm.prank(admin);
+        vm.expectRevert(VaultErrors.DepositNotPaused.selector);
+        vault.unpauseDeposit();
+    }
+
+    /// @notice 仅 admin 可切换赎回暂停状态，重复切换应回滚
+    function test_pauseRedeem_onlyAdminCanToggle() public {
+        assertFalse(vault.redeemPaused());
+
+        vm.prank(alice);
+        vm.expectRevert();
+        vault.pauseRedeem();
+
+        vm.prank(admin);
+        vault.pauseRedeem();
+        assertTrue(vault.redeemPaused());
+
+        vm.prank(admin);
+        vm.expectRevert(VaultErrors.RedeemPaused.selector);
+        vault.pauseRedeem();
+
+        vm.prank(alice);
+        vm.expectRevert();
+        vault.unpauseRedeem();
+
+        vm.prank(admin);
+        vault.unpauseRedeem();
+        assertFalse(vault.redeemPaused());
+
+        vm.prank(admin);
+        vm.expectRevert(VaultErrors.RedeemNotPaused.selector);
+        vault.unpauseRedeem();
+    }
+
     /// @notice claim 应转出可领取资产并触发 Claimed
     function test_claim_transfersClaimableAssetsAndEmitsClaimed() public {
         uint256 amount = 100e6;
@@ -872,6 +959,50 @@ contract VaultTest is Test {
         vault.finalizeEpoch(epoch, depositAmount - 1);
     }
 
+    /// @notice scheduleFeePolicy 在费率 bps 超过 10000 时应回滚
+    function test_scheduleFeePolicy_reverts_whenRateBpsExceedsDenominator() public {
+        FeePolicy memory policy = _zeroFeePolicy();
+        policy.rates.entryFeeBps = 10_001;
+        uint256 effectiveEpoch = vault.currentEpoch();
+
+        vm.prank(admin);
+        vm.expectRevert(VaultErrors.InvalidBps.selector);
+        vault.scheduleFeePolicy(policy, effectiveEpoch);
+    }
+
+    /// @notice scheduleFeePolicy 在 split 总和超过 10000 时应回滚
+    function test_scheduleFeePolicy_reverts_whenSplitSumExceedsDenominator() public {
+        FeePolicy memory policy = _zeroFeePolicy();
+        policy.entrySplit = SplitConfig({platformBps: 5000, referrerBps: 3000, managerBps: 3001});
+        uint256 effectiveEpoch = vault.currentEpoch();
+
+        vm.prank(admin);
+        vm.expectRevert(VaultErrors.InvalidSplit.selector);
+        vault.scheduleFeePolicy(policy, effectiveEpoch);
+    }
+
+    /// @notice reserve 收款地址为必填，缺失时 scheduleFeePolicy 应回滚
+    function test_scheduleFeePolicy_reverts_whenReserveRecipientMissing() public {
+        FeePolicy memory policy = _zeroFeePolicy();
+        policy.recipients.reserve = address(0);
+        uint256 effectiveEpoch = vault.currentEpoch();
+
+        vm.prank(admin);
+        vm.expectRevert(VaultErrors.ZeroAddress.selector);
+        vault.scheduleFeePolicy(policy, effectiveEpoch);
+    }
+
+    /// @notice 激活费率下存在平台分账但 platform 收款地址为空，scheduleFeePolicy 应回滚
+    function test_scheduleFeePolicy_reverts_whenActiveSplitHasPlatformShareButPlatformMissing() public {
+        FeePolicy memory policy = _entryFeePolicy();
+        policy.recipients.platform = address(0);
+        uint256 effectiveEpoch = vault.currentEpoch();
+
+        vm.prank(admin);
+        vm.expectRevert(VaultErrors.ZeroAddress.selector);
+        vault.scheduleFeePolicy(policy, effectiveEpoch);
+    }
+
     function _deployFactory(address initialOwner) internal returns (VaultFactory localFactory) {
         Vault implementation = new Vault();
         UpgradeableBeacon beacon = new UpgradeableBeacon(address(implementation), beaconOwner);
@@ -956,14 +1087,10 @@ contract VaultTest is Test {
     }
 
     // TODO(vault): 待业务函数实现后补充以下测试（函数名预留 + 中文说明）
-    // function test_requestDeposit_reverts_whenDepositPaused() public {} // 申购暂停时应回滚
-    // function test_requestRedeem_reverts_whenRedeemPaused() public {} // 赎回暂停时应回滚
     // function test_settleDeposits_processesBatchAndUpdatesCursor() public {} // 申购批结算应推进游标并更新状态
     // function test_settleRedeems_processesBatchAndUpdatesCursor() public {} // 赎回批结算应推进游标并更新状态
     // function test_transferToExecutor_reverts_whenCalledByNonOperator() public {} // 非 operator 划转执行钱包应回滚
     // function test_transferToExecutor_transfersBaseAssetToExecutor() public {} // operator 划转执行钱包应成功转账
-    // function test_pauseDeposit_onlyAdminCanToggle() public {} // 仅 admin 可切换申购暂停状态
-    // function test_pauseRedeem_onlyAdminCanToggle() public {} // 仅 admin 可切换赎回暂停状态
     // function test_depositRequestCount_returnsPerEpochLength() public {} // depositRequestCount 应返回对应 epoch 请求数
     // function test_redeemRequestCount_returnsPerEpochLength() public {} // redeemRequestCount 应返回对应 epoch 请求数
 }
