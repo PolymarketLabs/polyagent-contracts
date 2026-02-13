@@ -485,6 +485,29 @@ contract VaultTest is Test {
         vault.settleRedeems(epoch, 1);
     }
 
+    /// @notice 非 operator 调用 transferToExecutor 应回滚
+    function test_transferToExecutor_reverts_whenCalledByNonOperator() public {
+        vm.prank(alice);
+        vm.expectRevert();
+        vault.transferToExecutor(1);
+    }
+
+    /// @notice operator 调用 transferToExecutor 应将 baseAsset 转入 executor
+    function test_transferToExecutor_transfersBaseAssetToExecutor() public {
+        uint256 amount = 123e6;
+        vm.prank(address(this));
+        usdc.transfer(address(vault), amount);
+
+        uint256 beforeVault = usdc.balanceOf(address(vault));
+        uint256 beforeExecutor = usdc.balanceOf(executor);
+
+        vm.prank(operator);
+        vault.transferToExecutor(amount);
+
+        assertEq(usdc.balanceOf(address(vault)), beforeVault - amount);
+        assertEq(usdc.balanceOf(executor), beforeExecutor + amount);
+    }
+
     /// @notice claim 应转出可领取资产并触发 Claimed
     function test_claim_transfersClaimableAssetsAndEmitsClaimed() public {
         uint256 amount = 100e6;

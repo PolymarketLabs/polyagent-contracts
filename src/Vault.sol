@@ -381,7 +381,9 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, I
         }
     }
 
-    function transferToExecutor(uint256 amount) external override onlyRole(OPERATOR_ROLE) {}
+    function transferToExecutor(uint256 amount) external override onlyRole(OPERATOR_ROLE) {
+        IERC20(baseAsset).safeTransfer(executor, amount);
+    }
 
     // ===== 管理员操作 =====
 
