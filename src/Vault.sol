@@ -257,7 +257,60 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, I
         emit EpochFinalized(epoch, totalAum, sharesAtSettle, navPerShare);
     }
 
-    function settleDeposits(uint256 epoch, uint256 maxCount) external override onlyRole(OPERATOR_ROLE) {}
+    function settleDeposits(uint256 epoch, uint256 maxCount) external override onlyRole(OPERATOR_ROLE) {
+        if (maxCount == 0) {
+            revert InvalidMaxCount();
+        }
+
+        EpochSnapshot storage snapshot = snapshots[epoch];
+        // 仅允许结算已封账的 epoch
+        if (snapshot.finalizedAt == 0) {
+            revert InvalidFinalizeEpoch();
+        }
+
+        SettlementCursor storage cursor = cursors[epoch];
+        if (cursor.depositsDone) {
+            revert DepositsSettlementCompleted();
+        }
+
+        DepositRequest[] storage requests = depositRequests[epoch];
+        uint256 len = requests.length;
+        uint256 start = cursor.nextDeposit;
+
+        // 空批次或已到队尾时直接标记完成
+        if (start >= len) {
+            cursor.depositsDone = true;
+            revert DepositsSettlementCompleted();
+        }
+
+        uint256 navPerShare = snapshot.navPerShare;
+        if (navPerShare == 0) {
+            revert InvalidFinalizeEpoch();
+        }
+
+        uint256 end = start + maxCount;
+        if (end > len) {
+            end = len;
+        }
+
+        for (uint256 i = start; i < end; i++) {
+            DepositRequest storage req = requests[i];
+            if (req.status != ReqStatus.Pending) {
+                continue;
+            }
+
+            uint256 shares = (req.amount * NAV_SCALE) / navPerShare;
+            req.status = ReqStatus.Settled;
+            _mint(req.investor, shares);
+
+            emit DepositSettled(epoch, i, req.investor, shares);
+        }
+
+        cursor.nextDeposit = end;
+        if (end == len) {
+            cursor.depositsDone = true;
+        }
+    }
 
     function settleRedeems(uint256 epoch, uint256 maxCount) external override onlyRole(OPERATOR_ROLE) {}
 
