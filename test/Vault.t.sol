@@ -2,6 +2,7 @@
 pragma solidity ^0.8.30;
 
 import {Test} from "forge-std/Test.sol";
+import {stdStorage, StdStorage} from "forge-std/StdStorage.sol";
 import {Vault} from "../src/Vault.sol";
 import {VaultAdmin} from "../src/VaultAdmin.sol";
 import {VaultErrors} from "../src/vault/VaultErrors.sol";
@@ -13,12 +14,10 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 import {VaultFactory} from "../src/VaultFactory.sol";
 
 contract VaultTest is Test {
+    using stdStorage for StdStorage;
+
     uint256 public constant INITIAL_TIMESTAMP = 1767225600; // 2026-01-01 00:00:00 UTC
     uint256 public constant SECONDS_PER_EPOCH = 86400;
-    // VaultAdmin 新增了 uint256[50] __gap，Vault 本体存储起始槽位整体后移 50。
-    uint256 internal constant SNAPSHOTS_MAPPING_SLOT = 63; // Vault.snapshots 的映射槽位（需与 Vault 存储布局保持一致）
-    uint256 internal constant CLAIMABLE_ASSETS_MAPPING_SLOT = 58; // Vault.claimableAssets 的映射槽位（需与 Vault 存储布局保持一致）
-    uint256 internal constant FEE_CLAIMABLE_MAPPING_SLOT = 68; // Vault.feeClaimable 的映射槽位（需与 Vault 存储布局保持一致）
 
     USDC public usdc;
     VaultFactory public factory;
@@ -346,10 +345,12 @@ contract VaultTest is Test {
         vm.prank(alice);
         (uint256 epoch, uint256 index) = vault.requestDeposit(amount, bob);
 
-        // EpochSnapshot.finalizedAt 位于 snapshots[epoch] 结构体的第 4 个 slot（offset = 3）
-        bytes32 snapshotBaseSlot = keccak256(abi.encode(epoch, SNAPSHOTS_MAPPING_SLOT));
-        bytes32 finalizedAtSlot = bytes32(uint256(snapshotBaseSlot) + 3);
-        vm.store(address(vault), finalizedAtSlot, bytes32(uint256(1)));
+        vm.prank(admin);
+        vault.scheduleFeePolicy(_zeroFeePolicy(), epoch);
+
+        vm.warp(block.timestamp + SECONDS_PER_EPOCH);
+        vm.prank(operator);
+        vault.finalizeEpoch(epoch, amount);
 
         vm.prank(alice);
         vm.expectRevert(VaultErrors.EpochAlreadyFinalized.selector);
@@ -395,10 +396,12 @@ contract VaultTest is Test {
         vm.prank(alice);
         (uint256 epoch, uint256 index) = vault.requestRedeem(shares);
 
-        // EpochSnapshot.finalizedAt 位于 snapshots[epoch] 结构体的第 4 个 slot（offset = 3）
-        bytes32 snapshotBaseSlot = keccak256(abi.encode(epoch, SNAPSHOTS_MAPPING_SLOT));
-        bytes32 finalizedAtSlot = bytes32(uint256(snapshotBaseSlot) + 3);
-        vm.store(address(vault), finalizedAtSlot, bytes32(uint256(1)));
+        vm.prank(admin);
+        vault.scheduleFeePolicy(_zeroFeePolicy(), epoch);
+
+        vm.warp(block.timestamp + SECONDS_PER_EPOCH);
+        vm.prank(operator);
+        vault.finalizeEpoch(epoch, 100e6);
 
         vm.prank(alice);
         vm.expectRevert(VaultErrors.EpochAlreadyFinalized.selector);
@@ -1087,13 +1090,11 @@ contract VaultTest is Test {
     }
 
     function _setClaimableAsset(address investor, uint256 amount) internal {
-        bytes32 slot = keccak256(abi.encode(investor, CLAIMABLE_ASSETS_MAPPING_SLOT));
-        vm.store(address(vault), slot, bytes32(amount));
+        stdstore.target(address(vault)).sig("claimableAssets(address)").with_key(investor).checked_write(amount);
     }
 
     function _setFeeClaimable(address recipient, uint256 amount) internal {
-        bytes32 slot = keccak256(abi.encode(recipient, FEE_CLAIMABLE_MAPPING_SLOT));
-        vm.store(address(vault), slot, bytes32(amount));
+        stdstore.target(address(vault)).sig("feeClaimable(address)").with_key(recipient).checked_write(amount);
     }
 
     function _entryFeePolicy() internal view returns (FeePolicy memory policy) {
