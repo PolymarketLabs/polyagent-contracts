@@ -70,15 +70,6 @@ interface IVault {
     /// @param amount 划转金额
     function transferToExecutor(uint256 amount) external;
 
-    /// @notice 暂停申购
-    function pauseDeposit() external;
-    /// @notice 恢复申购
-    function unpauseDeposit() external;
-    /// @notice 暂停赎回
-    function pauseRedeem() external;
-    /// @notice 恢复赎回
-    function unpauseRedeem() external;
-
     /// @notice 预约某个 epoch 生效的完整费用策略（费率+分账+收款地址）
     /// @param policy 收费策略快照
     /// @param effectiveEpoch 策略生效 epoch（要求按时间递增）

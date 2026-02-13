@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity ^0.8.30;
 
-import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import {ERC20Upgradeable} from "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {IVault} from "./interfaces/IVault.sol";
+import {VaultAdmin} from "./VaultAdmin.sol";
+import {VaultEvents} from "./vault/VaultEvents.sol";
+import {VaultErrors} from "./vault/VaultErrors.sol";
 import {
     DepositRequest,
     RedeemRequest,
@@ -19,17 +21,12 @@ import {
     FeePolicy,
     FeePolicyCheckpoint
 } from "./vault/VaultTypes.sol";
-import {VaultEvents} from "./vault/VaultEvents.sol";
-import {VaultErrors} from "./vault/VaultErrors.sol";
 
-contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, IVault, VaultEvents, VaultErrors {
+contract Vault is ERC20Upgradeable, ReentrancyGuard, VaultAdmin, VaultEvents, VaultErrors, IVault {
     using SafeERC20 for IERC20;
     uint256 private constant NAV_SCALE = 1e18; // 采用 1e18 精度记录 NAV，避免与份额 decimals 耦合
     uint256 private constant BPS_DENOMINATOR = 10_000;
     uint256 private constant SECONDS_PER_YEAR = 365 days;
-
-    // ===== 角色常量 =====
-    bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
 
     // ===== 基础配置 =====
     address public baseAsset; // 基础资产地址（如 USDC）
@@ -37,15 +34,6 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, I
     uint256 public epoch0; // 初始化时刻对应的 epoch 起点
     uint256 public minDepositAmount; // 最小申购金额
     uint256 public minRedeemShares; // 最小赎回份额
-
-    // ===== 角色地址 =====
-    address public admin; // 默认管理员地址
-    address public operator; // 运营角色地址
-    address public executor; // 执行钱包
-
-    // ===== 运行状态 =====
-    bool public depositPaused; // 申购暂停开关
-    bool public redeemPaused; // 赎回暂停开关
 
     // ===== 用户请求与结算状态 =====
     mapping(address => uint256) public claimableAssets; // investor => 可领取基础资产
@@ -61,14 +49,15 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, I
     mapping(uint256 => SettlementCursor) public cursors; // epoch => 批处理游标
 
     // ===== 费用策略状态 =====
-    uint256 public highWaterMarkNav; // 业绩报酬高水位净值（预留）
+    uint256 public highWaterMarkNav; // 业绩报酬高水位净值（仅对超越该净值的收益计提业绩费）
     FeePolicyCheckpoint[] private feePolicyCheckpoints; // 按生效 epoch 递增存储的策略检查点
     mapping(address => address) public referrers; // 投资者 -> 推荐人（首绑生效）
     mapping(address => uint256) public feeClaimable; // 收款方可领取费用余额
     uint256 public lastFinalizedEpoch; // 最近一次完成封账的 epoch（首次封账前为 0）
 
     // ===== 升级预留 =====
-    uint256[100] private _gap;
+    // forge-lint: disable-next-line(mixed-case-variable)
+    uint256[100] private __gap;
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -392,34 +381,6 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, I
 
     // ===== 管理员操作 =====
 
-    function pauseDeposit() external override onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (depositPaused) {
-            revert DepositPaused();
-        }
-        depositPaused = true;
-    }
-
-    function unpauseDeposit() external override onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (!depositPaused) {
-            revert DepositNotPaused();
-        }
-        depositPaused = false;
-    }
-
-    function pauseRedeem() external override onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (redeemPaused) {
-            revert RedeemPaused();
-        }
-        redeemPaused = true;
-    }
-
-    function unpauseRedeem() external override onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (!redeemPaused) {
-            revert RedeemNotPaused();
-        }
-        redeemPaused = false;
-    }
-
     function scheduleFeePolicy(FeePolicy calldata policy, uint256 effectiveEpoch)
         external
         override
@@ -427,6 +388,10 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, I
     {
         // 配置落盘前先做结构化校验，避免无效策略进入 checkpoint。
         _validateFeePolicy(policy);
+        // 历史 epoch 口径已形成，禁止补录回填策略。
+        if (effectiveEpoch < _currentEpoch()) {
+            revert InvalidEffectiveEpoch();
+        }
 
         uint256 checkpointsLen = feePolicyCheckpoints.length;
         if (checkpointsLen > 0 && effectiveEpoch <= feePolicyCheckpoints[checkpointsLen - 1].effectiveEpoch) {
@@ -442,7 +407,22 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, I
         _bindReferrerIfUnbound(msg.sender, referrer);
     }
 
-    function claimFee(address to) external override nonReentrant returns (uint256 amount) {}
+    function claimFee(address to) external override nonReentrant returns (uint256 amount) {
+        if (to == address(0)) {
+            revert ZeroAddress();
+        }
+
+        amount = feeClaimable[msg.sender];
+        if (amount == 0) {
+            revert NoClaimableFee();
+        }
+
+        // 先清零可领取余额，再执行转账，遵循 CEI。
+        feeClaimable[msg.sender] = 0;
+        IERC20(baseAsset).safeTransfer(to, amount);
+
+        emit FeeClaimed(msg.sender, to, amount);
+    }
 
     // ===== 只读查询 =====
 
@@ -454,9 +434,13 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, I
         return _getInitializedVersion();
     }
 
-    function depositRequestCount(uint256 epoch) external view override returns (uint256) {}
+    function depositRequestCount(uint256 epoch) external view override returns (uint256) {
+        return depositRequests[epoch].length;
+    }
 
-    function redeemRequestCount(uint256 epoch) external view override returns (uint256) {}
+    function redeemRequestCount(uint256 epoch) external view override returns (uint256) {
+        return redeemRequests[epoch].length;
+    }
 
     function referrerOf(address investor) external view override returns (address) {
         return referrers[investor];

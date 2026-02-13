@@ -32,6 +32,7 @@ SEPOLIA_RPC_URL=
 MAINNET_RPC_URL=
 ETHERSCAN_API_KEY=
 BEACON=
+FACTORY_PROXY=
 ```
 
 变量说明：
@@ -39,7 +40,8 @@ BEACON=
 1. `PRIVATE_KEY`：广播交易账户私钥（部署与升级都会使用）。
 2. `LOCAL_RPC_URL` / `SEPOLIA_RPC_URL` / `MAINNET_RPC_URL`：对应网络 RPC。
 3. `ETHERSCAN_API_KEY`：仅 `--verify` 时需要。
-4. `BEACON`：升级脚本使用的 Beacon 地址。
+4. `BEACON`：部署 Factory 与升级 Vault 时使用的 Beacon 地址。
+5. `FACTORY_PROXY`：升级 VaultFactory 时使用的代理地址。
 
 执行命令前，先加载环境变量：
 
@@ -85,14 +87,34 @@ make anvil
 
 ```bash
 source .env
-make deploy-local
+make deploy-vault-local
 ```
 
-部署脚本：`script/DeployVault.s.sol:DeployBeaconScript`  
+部署脚本：`script/DeployVault.s.sol:DeployVaultScript`  
 输出会打印：
 
 1. `beacon: <address>`
-2. `factory: <address>`
+2. `vault implementation: <address>`
+
+4. 将上一步输出的 `beacon` 写回 `.env`：
+
+```dotenv
+BEACON=<vault beacon address>
+```
+
+5. 部署 Factory 代理：
+
+```bash
+source .env
+make deploy-factory-local
+```
+
+部署脚本：`script/DeployVaultFactory.s.sol:DeployVaultFactoryScript`  
+输出会打印：
+
+1. `beacon: <address>`
+2. `factory implementation: <address>`
+3. `factory proxy: <address>`
 
 ## 5. 测试网/主网部署
 
@@ -100,14 +122,18 @@ Sepolia：
 
 ```bash
 source .env
-make deploy-sepolia
+make deploy-vault-sepolia
+# 将输出的 beacon 地址写入 .env 的 BEACON
+make deploy-factory-sepolia
 ```
 
 Mainnet：
 
 ```bash
 source .env
-make deploy-mainnet
+make deploy-vault-mainnet
+# 将输出的 beacon 地址写入 .env 的 BEACON
+make deploy-factory-mainnet
 ```
 
 说明：
@@ -115,9 +141,11 @@ make deploy-mainnet
 1. 上述命令包含 `--verify`，需要 `ETHERSCAN_API_KEY`。
 2. 广播账户余额需覆盖部署 gas 成本。
 
-## 6. 升级流程（Beacon -> VaultV2）
+## 6. 升级流程
 
-升级脚本：`script/UpgradeVault.s.sol:UpgradeBeaconScript`  
+### 6.1 Vault 升级（Beacon -> VaultV2）
+
+升级脚本：`script/UpgradeVault.s.sol:UpgradeVaultScript`  
 脚本行为：
 
 1. 部署新的 `VaultV2` 实现合约。
@@ -132,21 +160,21 @@ make deploy-mainnet
 
 ```bash
 source .env
-make upgrade-local
+make upgrade-vault-local
 ```
 
 Sepolia 升级：
 
 ```bash
 source .env
-make upgrade-sepolia
+make upgrade-vault-sepolia
 ```
 
 Mainnet 升级：
 
 ```bash
 source .env
-make upgrade-mainnet
+make upgrade-vault-mainnet
 ```
 
 升级后建议验证：
@@ -155,10 +183,44 @@ make upgrade-mainnet
 2. 关键状态（例如 `baseAsset`、`admin`、`operator`）是否保持不变。
 3. 通过代理调用 `initializeV2` 后，`initializedVersion()` 从 `1` 变为 `2`。
 
+### 6.2 VaultFactory 升级（UUPS -> VaultFactoryV2）
+
+升级脚本：`script/UpgradeVaultFactory.s.sol:UpgradeVaultFactoryScript`  
+脚本行为：
+
+1. 部署新的 `VaultFactoryV2` 实现合约。
+2. 对 `FACTORY_PROXY` 执行 `upgradeToAndCall`，并调用 `initializeV2`。
+
+升级前准备：
+
+1. 设置 `.env` 中 `FACTORY_PROXY=<部署得到的 factory proxy 地址>`。
+2. 确认 `PRIVATE_KEY` 对应账户是 Factory owner。
+
+本地升级：
+
+```bash
+source .env
+make upgrade-factory-local
+```
+
+Sepolia 升级：
+
+```bash
+source .env
+make upgrade-factory-sepolia
+```
+
+Mainnet 升级：
+
+```bash
+source .env
+make upgrade-factory-mainnet
+```
+
 ## 7. 常见问题
 
 1. 报错 `OwnableUnauthorizedAccount`：当前私钥不是 Beacon owner。
 2. 报错缺少 RPC：检查 `.env` 和 `source .env` 是否已生效。
 3. 验证失败：检查 `ETHERSCAN_API_KEY` 与网络是否匹配。
 4. 升级脚本报 `BEACON` 未设置：补充 `.env` 中 `BEACON=...`。
-
+5. 升级 Factory 报 `FACTORY_PROXY` 未设置：补充 `.env` 中 `FACTORY_PROXY=...`。

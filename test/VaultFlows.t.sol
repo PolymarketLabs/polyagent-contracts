@@ -33,9 +33,6 @@ contract VaultFlowsTest is Test {
 
         factory = _deployFactory(owner);
         vault = Vault(_createFund(factory, address(usdc), manager, admin, operator, executor, SECONDS_PER_EPOCH));
-
-        vm.prank(admin);
-        vault.scheduleFeePolicy(_zeroFeePolicy(), 0);
     }
 
     /// @notice 端到端：申购 -> 封账 -> 申购结算
@@ -46,7 +43,7 @@ contract VaultFlowsTest is Test {
         deal(address(vault), manager, managerShares, true);
 
         vm.prank(address(this));
-        usdc.transfer(alice, depositAmount);
+        assertTrue(usdc.transfer(alice, depositAmount));
         vm.startPrank(alice);
         usdc.approve(address(vault), depositAmount);
         (uint256 epoch, uint256 index) = vault.requestDeposit(depositAmount, address(0));
@@ -88,7 +85,7 @@ contract VaultFlowsTest is Test {
         deal(address(vault), bob, bobShares, true);
 
         vm.prank(address(this));
-        usdc.transfer(alice, aliceDeposit);
+        assertTrue(usdc.transfer(alice, aliceDeposit));
         vm.startPrank(alice);
         usdc.approve(address(vault), aliceDeposit);
         (uint256 epoch, uint256 depositIndex) = vault.requestDeposit(aliceDeposit, address(0));
@@ -134,25 +131,25 @@ contract VaultFlowsTest is Test {
         deal(address(vault), manager, 100e18, true);
 
         vm.prank(address(this));
-        usdc.transfer(alice, 100e6);
+        assertTrue(usdc.transfer(alice, 100e6));
         vm.startPrank(alice);
         usdc.approve(address(vault), 100e6);
         (uint256 epoch2, uint256 aliceIndex) = vault.requestDeposit(100e6, address(0));
         vm.stopPrank();
 
+        vm.prank(admin);
+        vault.scheduleFeePolicy(_zeroFeePolicy(), epoch2);
+        vm.prank(admin);
+        vault.scheduleFeePolicy(_zeroFeePolicy(), epoch2 + 1);
+
         vm.warp(block.timestamp + SECONDS_PER_EPOCH + 1);
         vm.prank(address(this));
-        usdc.transfer(bob, 50e6);
+        assertTrue(usdc.transfer(bob, 50e6));
         vm.startPrank(bob);
         usdc.approve(address(vault), 50e6);
         (uint256 epoch3, uint256 bobIndex) = vault.requestDeposit(50e6, address(0));
         vm.stopPrank();
         assertEq(epoch3, epoch2 + 1);
-
-        vm.prank(admin);
-        vault.scheduleFeePolicy(_zeroFeePolicy(), epoch2);
-        vm.prank(admin);
-        vault.scheduleFeePolicy(_zeroFeePolicy(), epoch3);
 
         // 延迟到下一天再回头封 epoch2
         vm.warp(block.timestamp + SECONDS_PER_EPOCH);
@@ -198,8 +195,11 @@ contract VaultFlowsTest is Test {
         uint256 managerShares = 100e18;
         deal(address(vault), manager, managerShares, true);
 
+        uint256 epoch1 = vault.currentEpoch() + 1;
+        vm.prank(admin);
+        vault.scheduleFeePolicy(_zeroFeePolicy(), epoch1);
+
         vm.warp(block.timestamp + (2 * SECONDS_PER_EPOCH));
-        uint256 epoch1 = vault.currentEpoch() - 1;
         vm.prank(operator);
         vault.finalizeEpoch(epoch1, 500e6);
 
@@ -215,7 +215,8 @@ contract VaultFlowsTest is Test {
 
     /// @notice 未配置 fee policy 时，封账应回滚，避免进入不确定收费状态
     function test_flow_finalize_reverts_whenNoFeePolicyConfigured() public {
-        Vault localVault = Vault(_createFund(factory, address(usdc), manager, admin, operator, executor, SECONDS_PER_EPOCH));
+        Vault localVault =
+            Vault(_createFund(factory, address(usdc), manager, admin, operator, executor, SECONDS_PER_EPOCH));
         deal(address(localVault), manager, 100e18, true);
 
         vm.warp(block.timestamp + (2 * SECONDS_PER_EPOCH));
@@ -229,6 +230,10 @@ contract VaultFlowsTest is Test {
     /// @notice 已封较新 epoch 后再封更早 epoch，应按顺序约束回滚
     function test_flow_finalize_reverts_whenOutOfOrderEpoch() public {
         deal(address(vault), manager, 100e18, true);
+        uint256 currentEpoch = vault.currentEpoch();
+
+        vm.prank(admin);
+        vault.scheduleFeePolicy(_zeroFeePolicy(), currentEpoch);
 
         vm.warp(block.timestamp + (3 * SECONDS_PER_EPOCH));
         uint256 epochNewer = vault.currentEpoch() - 1;
@@ -276,15 +281,18 @@ contract VaultFlowsTest is Test {
         deal(address(vault), manager, managerShares, true);
 
         vm.prank(address(this));
-        usdc.transfer(alice, depositAmount);
+        assertTrue(usdc.transfer(alice, depositAmount));
         vm.startPrank(alice);
         usdc.approve(address(vault), depositAmount);
         (uint256 epoch1,) = vault.requestDeposit(depositAmount, address(0));
         vm.stopPrank();
 
+        vm.prank(admin);
+        vault.scheduleFeePolicy(_entryFeePolicy(), epoch1);
+
         vm.warp(block.timestamp + SECONDS_PER_EPOCH + 1);
         vm.prank(address(this));
-        usdc.transfer(bob, depositAmount);
+        assertTrue(usdc.transfer(bob, depositAmount));
         vm.startPrank(bob);
         usdc.approve(address(vault), depositAmount);
         (uint256 epoch2,) = vault.requestDeposit(depositAmount, address(0));
@@ -292,8 +300,6 @@ contract VaultFlowsTest is Test {
 
         assertEq(epoch2, epoch1 + 1);
 
-        vm.prank(admin);
-        vault.scheduleFeePolicy(_entryFeePolicy(), epoch1);
         vm.prank(admin);
         vault.scheduleFeePolicy(_zeroFeePolicy(), epoch2);
 
@@ -328,9 +334,9 @@ contract VaultFlowsTest is Test {
         deal(address(vault), manager, managerShares, true);
 
         vm.prank(address(this));
-        usdc.transfer(alice, aliceAmount);
+        assertTrue(usdc.transfer(alice, aliceAmount));
         vm.prank(address(this));
-        usdc.transfer(bob, bobAmount);
+        assertTrue(usdc.transfer(bob, bobAmount));
 
         vm.startPrank(alice);
         usdc.approve(address(vault), aliceAmount);

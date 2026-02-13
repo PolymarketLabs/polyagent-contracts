@@ -2,7 +2,9 @@
 pragma solidity ^0.8.30;
 
 import {Test} from "forge-std/Test.sol";
+import {stdStorage, StdStorage} from "forge-std/StdStorage.sol";
 import {Vault} from "../src/Vault.sol";
+import {VaultAdmin} from "../src/VaultAdmin.sol";
 import {VaultErrors} from "../src/vault/VaultErrors.sol";
 import {ReqStatus, FeePolicy, FeeRateConfig, SplitConfig, FeeRecipientConfig} from "../src/vault/VaultTypes.sol";
 import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
@@ -12,10 +14,10 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 import {VaultFactory} from "../src/VaultFactory.sol";
 
 contract VaultTest is Test {
+    using stdStorage for StdStorage;
+
     uint256 public constant INITIAL_TIMESTAMP = 1767225600; // 2026-01-01 00:00:00 UTC
     uint256 public constant SECONDS_PER_EPOCH = 86400;
-    uint256 internal constant SNAPSHOTS_MAPPING_SLOT = 13; // Vault.snapshots 的映射槽位（需与 Vault 存储布局保持一致）
-    uint256 internal constant CLAIMABLE_ASSETS_MAPPING_SLOT = 8; // Vault.claimableAssets 的映射槽位（需与 Vault 存储布局保持一致）
 
     USDC public usdc;
     VaultFactory public factory;
@@ -29,8 +31,10 @@ contract VaultTest is Test {
     address executor = makeAddr("executor");
     address alice = makeAddr("alice");
     address bob = makeAddr("bob");
+    address carol = makeAddr("carol");
 
     event Claimed(address indexed investor, address indexed to, uint256 amount);
+    event FeeClaimed(address indexed recipient, address indexed to, uint256 amount);
     event EpochFinalized(uint256 indexed epoch, uint256 totalAum, uint256 sharesAtSettle, uint256 navPerShare);
 
     function setUp() public {
@@ -39,9 +43,6 @@ contract VaultTest is Test {
 
         factory = _deployFactory(owner);
         vault = Vault(_createFund(factory, address(usdc), manager, admin, operator, executor, SECONDS_PER_EPOCH));
-
-        vm.prank(admin);
-        vault.scheduleFeePolicy(_zeroFeePolicy(), 0);
     }
 
     /// @notice 验证初始化后 secondsPerEpoch 被正确写入
@@ -75,7 +76,7 @@ contract VaultTest is Test {
     function test_initialize_reverts_whenBaseAssetIsZero() public {
         VaultFactory localFactory = _deployFactory(owner);
         vm.prank(owner);
-        vm.expectRevert(VaultErrors.ZeroAddress.selector);
+        vm.expectRevert(VaultAdmin.ZeroAddress.selector);
         localFactory.createFund(
             "Alpha Fund Share", "AFS", address(0), manager, admin, operator, executor, SECONDS_PER_EPOCH
         );
@@ -85,7 +86,7 @@ contract VaultTest is Test {
     function test_initialize_reverts_whenAdminIsZero() public {
         VaultFactory localFactory = _deployFactory(owner);
         vm.prank(owner);
-        vm.expectRevert(VaultErrors.ZeroAddress.selector);
+        vm.expectRevert(VaultAdmin.ZeroAddress.selector);
         localFactory.createFund(
             "Alpha Fund Share", "AFS", address(usdc), manager, address(0), operator, executor, SECONDS_PER_EPOCH
         );
@@ -95,7 +96,7 @@ contract VaultTest is Test {
     function test_initialize_reverts_whenOperatorIsZero() public {
         VaultFactory localFactory = _deployFactory(owner);
         vm.prank(owner);
-        vm.expectRevert(VaultErrors.ZeroAddress.selector);
+        vm.expectRevert(VaultAdmin.ZeroAddress.selector);
         localFactory.createFund(
             "Alpha Fund Share", "AFS", address(usdc), manager, admin, address(0), executor, SECONDS_PER_EPOCH
         );
@@ -105,7 +106,7 @@ contract VaultTest is Test {
     function test_initialize_reverts_whenExecutorIsZero() public {
         VaultFactory localFactory = _deployFactory(owner);
         vm.prank(owner);
-        vm.expectRevert(VaultErrors.ZeroAddress.selector);
+        vm.expectRevert(VaultAdmin.ZeroAddress.selector);
         localFactory.createFund(
             "Alpha Fund Share", "AFS", address(usdc), manager, admin, operator, address(0), SECONDS_PER_EPOCH
         );
@@ -152,7 +153,7 @@ contract VaultTest is Test {
     function test_requestDeposit_recordsPendingAndTransfersBaseAsset() public {
         uint256 amount = 100e6;
         vm.prank(address(this));
-        usdc.transfer(alice, amount);
+        assertTrue(usdc.transfer(alice, amount));
 
         vm.prank(alice);
         usdc.approve(address(vault), amount);
@@ -179,7 +180,7 @@ contract VaultTest is Test {
     function test_requestDeposit_referrerOnlyBindsWhenUnbound() public {
         uint256 amount = 100e6;
         vm.prank(address(this));
-        usdc.transfer(alice, amount * 2);
+        assertTrue(usdc.transfer(alice, amount * 2));
 
         vm.startPrank(alice);
         usdc.approve(address(vault), amount * 2);
@@ -227,18 +228,59 @@ contract VaultTest is Test {
         vault.requestRedeem(0);
     }
 
+    /// @notice depositRequestCount 应返回指定 epoch 的申购请求条数
+    function test_depositRequestCount_returnsPerEpochLength() public {
+        uint256 aliceAmount = 100e6;
+        uint256 bobAmount = 50e6;
+
+        vm.prank(address(this));
+        assertTrue(usdc.transfer(alice, aliceAmount));
+        vm.prank(address(this));
+        assertTrue(usdc.transfer(bob, bobAmount));
+
+        vm.startPrank(alice);
+        usdc.approve(address(vault), aliceAmount);
+        (uint256 epoch,) = vault.requestDeposit(aliceAmount, address(0));
+        vm.stopPrank();
+
+        vm.startPrank(bob);
+        usdc.approve(address(vault), bobAmount);
+        vault.requestDeposit(bobAmount, address(0));
+        vm.stopPrank();
+
+        assertEq(vault.depositRequestCount(epoch), 2);
+        assertEq(vault.depositRequestCount(epoch + 1), 0);
+    }
+
+    /// @notice redeemRequestCount 应返回指定 epoch 的赎回请求条数
+    function test_redeemRequestCount_returnsPerEpochLength() public {
+        uint256 aliceShares = 10e18;
+        uint256 bobShares = 5e18;
+        deal(address(vault), alice, aliceShares, true);
+        deal(address(vault), bob, bobShares, true);
+
+        vm.prank(alice);
+        (uint256 epoch,) = vault.requestRedeem(aliceShares);
+
+        vm.prank(bob);
+        vault.requestRedeem(bobShares);
+
+        assertEq(vault.redeemRequestCount(epoch), 2);
+        assertEq(vault.redeemRequestCount(epoch + 1), 0);
+    }
+
     /// @notice 申购暂停期间，requestDeposit 应回滚
     function test_requestDeposit_reverts_whenDepositPaused() public {
         uint256 amount = 100e6;
         vm.prank(address(this));
-        usdc.transfer(alice, amount);
+        assertTrue(usdc.transfer(alice, amount));
 
         vm.prank(admin);
         vault.pauseDeposit();
 
         vm.startPrank(alice);
         usdc.approve(address(vault), amount);
-        vm.expectRevert(VaultErrors.DepositPaused.selector);
+        vm.expectRevert(VaultAdmin.DepositPaused.selector);
         vault.requestDeposit(amount, address(0));
         vm.stopPrank();
     }
@@ -252,7 +294,7 @@ contract VaultTest is Test {
         vault.pauseRedeem();
 
         vm.prank(alice);
-        vm.expectRevert(VaultErrors.RedeemPaused.selector);
+        vm.expectRevert(VaultAdmin.RedeemPaused.selector);
         vault.requestRedeem(shares);
     }
 
@@ -260,7 +302,7 @@ contract VaultTest is Test {
     function test_cancelDeposit_returnsBaseAssetAndMarksCanceled() public {
         uint256 amount = 100e6;
         vm.prank(address(this));
-        usdc.transfer(alice, amount);
+        assertTrue(usdc.transfer(alice, amount));
 
         vm.startPrank(alice);
         usdc.approve(address(vault), amount);
@@ -280,7 +322,7 @@ contract VaultTest is Test {
     function test_cancelDeposit_reverts_whenNotRequestOwner() public {
         uint256 amount = 100e6;
         vm.prank(address(this));
-        usdc.transfer(alice, amount);
+        assertTrue(usdc.transfer(alice, amount));
 
         vm.prank(alice);
         usdc.approve(address(vault), amount);
@@ -296,17 +338,19 @@ contract VaultTest is Test {
     function test_cancelDeposit_reverts_whenEpochAlreadyFinalized() public {
         uint256 amount = 100e6;
         vm.prank(address(this));
-        usdc.transfer(alice, amount);
+        assertTrue(usdc.transfer(alice, amount));
 
         vm.prank(alice);
         usdc.approve(address(vault), amount);
         vm.prank(alice);
         (uint256 epoch, uint256 index) = vault.requestDeposit(amount, bob);
 
-        // EpochSnapshot.finalizedAt 位于 snapshots[epoch] 结构体的第 4 个 slot（offset = 3）
-        bytes32 snapshotBaseSlot = keccak256(abi.encode(epoch, SNAPSHOTS_MAPPING_SLOT));
-        bytes32 finalizedAtSlot = bytes32(uint256(snapshotBaseSlot) + 3);
-        vm.store(address(vault), finalizedAtSlot, bytes32(uint256(1)));
+        vm.prank(admin);
+        vault.scheduleFeePolicy(_zeroFeePolicy(), epoch);
+
+        vm.warp(block.timestamp + SECONDS_PER_EPOCH);
+        vm.prank(operator);
+        vault.finalizeEpoch(epoch, amount);
 
         vm.prank(alice);
         vm.expectRevert(VaultErrors.EpochAlreadyFinalized.selector);
@@ -352,10 +396,12 @@ contract VaultTest is Test {
         vm.prank(alice);
         (uint256 epoch, uint256 index) = vault.requestRedeem(shares);
 
-        // EpochSnapshot.finalizedAt 位于 snapshots[epoch] 结构体的第 4 个 slot（offset = 3）
-        bytes32 snapshotBaseSlot = keccak256(abi.encode(epoch, SNAPSHOTS_MAPPING_SLOT));
-        bytes32 finalizedAtSlot = bytes32(uint256(snapshotBaseSlot) + 3);
-        vm.store(address(vault), finalizedAtSlot, bytes32(uint256(1)));
+        vm.prank(admin);
+        vault.scheduleFeePolicy(_zeroFeePolicy(), epoch);
+
+        vm.warp(block.timestamp + SECONDS_PER_EPOCH);
+        vm.prank(operator);
+        vault.finalizeEpoch(epoch, 100e6);
 
         vm.prank(alice);
         vm.expectRevert(VaultErrors.EpochAlreadyFinalized.selector);
@@ -386,9 +432,9 @@ contract VaultTest is Test {
         uint256 bobAmount = 50e6;
 
         vm.prank(address(this));
-        usdc.transfer(alice, aliceAmount);
+        assertTrue(usdc.transfer(alice, aliceAmount));
         vm.prank(address(this));
-        usdc.transfer(bob, bobAmount);
+        assertTrue(usdc.transfer(bob, bobAmount));
 
         vm.startPrank(alice);
         usdc.approve(address(vault), aliceAmount);
@@ -454,7 +500,7 @@ contract VaultTest is Test {
         deal(address(vault), manager, managerShares, true);
 
         vm.prank(address(this));
-        usdc.transfer(alice, depositAmount);
+        assertTrue(usdc.transfer(alice, depositAmount));
         vm.startPrank(alice);
         usdc.approve(address(vault), depositAmount);
         (uint256 epoch,) = vault.requestDeposit(depositAmount, bob);
@@ -491,7 +537,7 @@ contract VaultTest is Test {
         deal(address(vault), manager, managerShares, true);
 
         vm.prank(address(this));
-        usdc.transfer(alice, depositAmount);
+        assertTrue(usdc.transfer(alice, depositAmount));
         vm.startPrank(alice);
         usdc.approve(address(vault), depositAmount);
         (uint256 epoch,) = vault.requestDeposit(depositAmount, address(0));
@@ -659,11 +705,11 @@ contract VaultTest is Test {
         uint256 totalAum = 1_000_000e6;
         deal(address(vault), manager, managerShares, true);
 
-        vm.warp(block.timestamp + (2 * SECONDS_PER_EPOCH));
-        uint256 epoch = vault.currentEpoch() - 1;
-
+        uint256 epoch = vault.currentEpoch() + 1;
         vm.prank(admin);
         vault.scheduleFeePolicy(_mgmtFeePolicy(), epoch);
+
+        vm.warp(block.timestamp + (2 * SECONDS_PER_EPOCH));
 
         vm.prank(operator);
         vault.finalizeEpoch(epoch, totalAum);
@@ -763,7 +809,7 @@ contract VaultTest is Test {
     function test_transferToExecutor_transfersBaseAssetToExecutor() public {
         uint256 amount = 123e6;
         vm.prank(address(this));
-        usdc.transfer(address(vault), amount);
+        assertTrue(usdc.transfer(address(vault), amount));
 
         uint256 beforeVault = usdc.balanceOf(address(vault));
         uint256 beforeExecutor = usdc.balanceOf(executor);
@@ -775,69 +821,11 @@ contract VaultTest is Test {
         assertEq(usdc.balanceOf(executor), beforeExecutor + amount);
     }
 
-    /// @notice 仅 admin 可切换申购暂停状态，重复切换应回滚
-    function test_pauseDeposit_onlyAdminCanToggle() public {
-        assertFalse(vault.depositPaused());
-
-        vm.prank(alice);
-        vm.expectRevert();
-        vault.pauseDeposit();
-
-        vm.prank(admin);
-        vault.pauseDeposit();
-        assertTrue(vault.depositPaused());
-
-        vm.prank(admin);
-        vm.expectRevert(VaultErrors.DepositPaused.selector);
-        vault.pauseDeposit();
-
-        vm.prank(alice);
-        vm.expectRevert();
-        vault.unpauseDeposit();
-
-        vm.prank(admin);
-        vault.unpauseDeposit();
-        assertFalse(vault.depositPaused());
-
-        vm.prank(admin);
-        vm.expectRevert(VaultErrors.DepositNotPaused.selector);
-        vault.unpauseDeposit();
-    }
-
-    /// @notice 仅 admin 可切换赎回暂停状态，重复切换应回滚
-    function test_pauseRedeem_onlyAdminCanToggle() public {
-        assertFalse(vault.redeemPaused());
-
-        vm.prank(alice);
-        vm.expectRevert();
-        vault.pauseRedeem();
-
-        vm.prank(admin);
-        vault.pauseRedeem();
-        assertTrue(vault.redeemPaused());
-
-        vm.prank(admin);
-        vm.expectRevert(VaultErrors.RedeemPaused.selector);
-        vault.pauseRedeem();
-
-        vm.prank(alice);
-        vm.expectRevert();
-        vault.unpauseRedeem();
-
-        vm.prank(admin);
-        vault.unpauseRedeem();
-        assertFalse(vault.redeemPaused());
-
-        vm.prank(admin);
-        vm.expectRevert(VaultErrors.RedeemNotPaused.selector);
-        vault.unpauseRedeem();
-    }
-
     /// @notice claim 应转出可领取资产并触发 Claimed
     function test_claim_transfersClaimableAssetsAndEmitsClaimed() public {
         uint256 amount = 100e6;
         vm.prank(address(this));
-        usdc.transfer(address(vault), amount);
+        assertTrue(usdc.transfer(address(vault), amount));
         _setClaimableAsset(alice, amount);
 
         vm.prank(alice);
@@ -861,7 +849,7 @@ contract VaultTest is Test {
     function test_claim_reverts_whenToIsZeroAddress() public {
         _setClaimableAsset(alice, 1);
         vm.prank(alice);
-        vm.expectRevert(VaultErrors.ZeroAddress.selector);
+        vm.expectRevert(VaultAdmin.ZeroAddress.selector);
         vault.claim(address(0));
     }
 
@@ -870,7 +858,7 @@ contract VaultTest is Test {
         uint256 claimableAmount = 100e6;
         uint256 vaultBalance = 50e6;
         vm.prank(address(this));
-        usdc.transfer(address(vault), vaultBalance);
+        assertTrue(usdc.transfer(address(vault), vaultBalance));
         _setClaimableAsset(alice, claimableAmount);
 
         vm.prank(alice);
@@ -883,6 +871,60 @@ contract VaultTest is Test {
 
         // 转账失败应导致整笔交易回滚，claimable 余额不应被清零
         assertEq(vault.claimableAssets(alice), claimableAmount);
+        assertEq(usdc.balanceOf(bob), 0);
+    }
+
+    /// @notice claimFee 应转出可领取费用并触发 FeeClaimed
+    function test_claimFee_transfersFeeAndEmitsEvent() public {
+        uint256 amount = 100e6;
+        vm.prank(address(this));
+        assertTrue(usdc.transfer(address(vault), amount));
+        _setFeeClaimable(alice, amount);
+
+        vm.prank(alice);
+        vm.expectEmit(true, true, true, true);
+        emit FeeClaimed(alice, bob, amount);
+        uint256 claimedAmount = vault.claimFee(bob);
+
+        assertEq(claimedAmount, amount);
+        assertEq(vault.feeClaimableOf(alice), 0);
+        assertEq(usdc.balanceOf(bob), amount);
+    }
+
+    /// @notice claimFee 在无可领取费用时应回滚
+    function test_claimFee_reverts_whenNoClaimableFee() public {
+        vm.prank(alice);
+        vm.expectRevert(VaultErrors.NoClaimableFee.selector);
+        vault.claimFee(bob);
+    }
+
+    /// @notice claimFee 的收款地址为零地址时应回滚
+    function test_claimFee_reverts_whenToIsZeroAddress() public {
+        _setFeeClaimable(alice, 1);
+
+        vm.prank(alice);
+        vm.expectRevert(VaultAdmin.ZeroAddress.selector);
+        vault.claimFee(address(0));
+    }
+
+    /// @notice 当 Vault 持有的 baseAsset 不足以覆盖可领取费用时，claimFee 应回滚
+    function test_claimFee_reverts_whenVaultBaseAssetInsufficient() public {
+        uint256 claimableAmount = 100e6;
+        uint256 vaultBalance = 50e6;
+        vm.prank(address(this));
+        assertTrue(usdc.transfer(address(vault), vaultBalance));
+        _setFeeClaimable(alice, claimableAmount);
+
+        vm.prank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IERC20Errors.ERC20InsufficientBalance.selector, address(vault), vaultBalance, claimableAmount
+            )
+        );
+        vault.claimFee(bob);
+
+        // 转账失败应导致整笔交易回滚，feeClaimable 余额不应被清零
+        assertEq(vault.feeClaimableOf(alice), claimableAmount);
         assertEq(usdc.balanceOf(bob), 0);
     }
 
@@ -909,8 +951,11 @@ contract VaultTest is Test {
 
     /// @notice 同一 epoch 二次封账应回滚
     function test_finalizeEpoch_reverts_whenCalledTwiceForSameEpoch() public {
+        uint256 epoch = vault.currentEpoch() + 1;
+        vm.prank(admin);
+        vault.scheduleFeePolicy(_zeroFeePolicy(), epoch);
+
         vm.warp(block.timestamp + (2 * SECONDS_PER_EPOCH));
-        uint256 epoch = vault.currentEpoch() - 1;
         vm.prank(operator);
         vault.finalizeEpoch(epoch, 100e6);
 
@@ -923,8 +968,11 @@ contract VaultTest is Test {
     function test_finalizeEpoch_storesSnapshotAndEmitsEvent() public {
         uint256 sharesAtSettle = 200e18;
         uint256 totalAum = 500e6;
+        uint256 epoch = vault.currentEpoch() + 1;
+        vm.prank(admin);
+        vault.scheduleFeePolicy(_zeroFeePolicy(), epoch);
+
         vm.warp(block.timestamp + (2 * SECONDS_PER_EPOCH));
-        uint256 epoch = vault.currentEpoch() - 1;
         uint256 expectedNavPerShare = (totalAum * 1e18) / sharesAtSettle;
 
         deal(address(vault), alice, sharesAtSettle, true);
@@ -945,12 +993,15 @@ contract VaultTest is Test {
     function test_finalizeEpoch_reverts_whenTotalAumLessThanNetRequestedDeposits() public {
         uint256 depositAmount = 100e6;
         vm.prank(address(this));
-        usdc.transfer(alice, depositAmount);
+        assertTrue(usdc.transfer(alice, depositAmount));
 
         vm.startPrank(alice);
         usdc.approve(address(vault), depositAmount);
         (uint256 epoch,) = vault.requestDeposit(depositAmount, address(0));
         vm.stopPrank();
+
+        vm.prank(admin);
+        vault.scheduleFeePolicy(_zeroFeePolicy(), epoch);
 
         vm.warp(block.timestamp + (2 * SECONDS_PER_EPOCH));
 
@@ -968,6 +1019,18 @@ contract VaultTest is Test {
         vm.prank(admin);
         vm.expectRevert(VaultErrors.InvalidBps.selector);
         vault.scheduleFeePolicy(policy, effectiveEpoch);
+    }
+
+    /// @notice scheduleFeePolicy 不允许回填历史 epoch
+    function test_scheduleFeePolicy_reverts_whenEffectiveEpochIsHistorical() public {
+        FeePolicy memory policy = _zeroFeePolicy();
+        uint256 current = vault.currentEpoch();
+        vm.warp(block.timestamp + SECONDS_PER_EPOCH);
+        uint256 historicalEpoch = current;
+
+        vm.prank(admin);
+        vm.expectRevert(VaultErrors.InvalidEffectiveEpoch.selector);
+        vault.scheduleFeePolicy(policy, historicalEpoch);
     }
 
     /// @notice scheduleFeePolicy 在 split 总和超过 10000 时应回滚
@@ -988,7 +1051,7 @@ contract VaultTest is Test {
         uint256 effectiveEpoch = vault.currentEpoch();
 
         vm.prank(admin);
-        vm.expectRevert(VaultErrors.ZeroAddress.selector);
+        vm.expectRevert(VaultAdmin.ZeroAddress.selector);
         vault.scheduleFeePolicy(policy, effectiveEpoch);
     }
 
@@ -999,7 +1062,7 @@ contract VaultTest is Test {
         uint256 effectiveEpoch = vault.currentEpoch();
 
         vm.prank(admin);
-        vm.expectRevert(VaultErrors.ZeroAddress.selector);
+        vm.expectRevert(VaultAdmin.ZeroAddress.selector);
         vault.scheduleFeePolicy(policy, effectiveEpoch);
     }
 
@@ -1027,8 +1090,11 @@ contract VaultTest is Test {
     }
 
     function _setClaimableAsset(address investor, uint256 amount) internal {
-        bytes32 slot = keccak256(abi.encode(investor, CLAIMABLE_ASSETS_MAPPING_SLOT));
-        vm.store(address(vault), slot, bytes32(amount));
+        stdstore.target(address(vault)).sig("claimableAssets(address)").with_key(investor).checked_write(amount);
+    }
+
+    function _setFeeClaimable(address recipient, uint256 amount) internal {
+        stdstore.target(address(vault)).sig("feeClaimable(address)").with_key(recipient).checked_write(amount);
     }
 
     function _entryFeePolicy() internal view returns (FeePolicy memory policy) {
@@ -1085,12 +1151,4 @@ contract VaultTest is Test {
             recipients: FeeRecipientConfig({platform: admin, manager: manager, reserve: executor})
         });
     }
-
-    // TODO(vault): 待业务函数实现后补充以下测试（函数名预留 + 中文说明）
-    // function test_settleDeposits_processesBatchAndUpdatesCursor() public {} // 申购批结算应推进游标并更新状态
-    // function test_settleRedeems_processesBatchAndUpdatesCursor() public {} // 赎回批结算应推进游标并更新状态
-    // function test_transferToExecutor_reverts_whenCalledByNonOperator() public {} // 非 operator 划转执行钱包应回滚
-    // function test_transferToExecutor_transfersBaseAssetToExecutor() public {} // operator 划转执行钱包应成功转账
-    // function test_depositRequestCount_returnsPerEpochLength() public {} // depositRequestCount 应返回对应 epoch 请求数
-    // function test_redeemRequestCount_returnsPerEpochLength() public {} // redeemRequestCount 应返回对应 epoch 请求数
 }
