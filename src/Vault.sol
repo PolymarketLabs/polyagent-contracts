@@ -61,7 +61,7 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, I
     mapping(uint256 => SettlementCursor) public cursors; // epoch => 批处理游标
 
     // ===== 费用策略状态 =====
-    uint256 public highWaterMarkNav; // 业绩报酬高水位净值（预留）
+    uint256 public highWaterMarkNav; // 业绩报酬高水位净值（仅对超越该净值的收益计提业绩费）
     FeePolicyCheckpoint[] private feePolicyCheckpoints; // 按生效 epoch 递增存储的策略检查点
     mapping(address => address) public referrers; // 投资者 -> 推荐人（首绑生效）
     mapping(address => uint256) public feeClaimable; // 收款方可领取费用余额
@@ -397,6 +397,7 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, I
             revert DepositPaused();
         }
         depositPaused = true;
+        emit DepositPauseStatusUpdated(msg.sender, true);
     }
 
     function unpauseDeposit() external override onlyRole(DEFAULT_ADMIN_ROLE) {
@@ -404,6 +405,7 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, I
             revert DepositNotPaused();
         }
         depositPaused = false;
+        emit DepositPauseStatusUpdated(msg.sender, false);
     }
 
     function pauseRedeem() external override onlyRole(DEFAULT_ADMIN_ROLE) {
@@ -411,6 +413,7 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, I
             revert RedeemPaused();
         }
         redeemPaused = true;
+        emit RedeemPauseStatusUpdated(msg.sender, true);
     }
 
     function unpauseRedeem() external override onlyRole(DEFAULT_ADMIN_ROLE) {
@@ -418,6 +421,7 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, I
             revert RedeemNotPaused();
         }
         redeemPaused = false;
+        emit RedeemPauseStatusUpdated(msg.sender, false);
     }
 
     function scheduleFeePolicy(FeePolicy calldata policy, uint256 effectiveEpoch)
@@ -427,6 +431,10 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, I
     {
         // 配置落盘前先做结构化校验，避免无效策略进入 checkpoint。
         _validateFeePolicy(policy);
+        // 历史 epoch 口径已形成，禁止补录回填策略。
+        if (effectiveEpoch < _currentEpoch()) {
+            revert InvalidEffectiveEpoch();
+        }
 
         uint256 checkpointsLen = feePolicyCheckpoints.length;
         if (checkpointsLen > 0 && effectiveEpoch <= feePolicyCheckpoints[checkpointsLen - 1].effectiveEpoch) {
