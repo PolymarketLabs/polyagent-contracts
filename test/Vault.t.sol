@@ -600,6 +600,30 @@ contract VaultTest is Test {
         assertEq(vault.feeClaimableOf(executor), 0);
     }
 
+    /// @notice previewEntryFee 应按当前 epoch 生效策略返回申购费与净额
+    function test_previewEntryFee_appliesCurrentEpochPolicy() public {
+        uint256 amount = 100e6;
+        uint256 epoch = vault.currentEpoch();
+        vm.prank(admin);
+        vault.scheduleFeePolicy(_entryFeePolicy(), epoch);
+
+        (uint256 fee, uint256 netAmount) = vault.previewEntryFee(amount);
+        assertEq(fee, (amount * 1000) / 10_000);
+        assertEq(netAmount, amount - fee);
+    }
+
+    /// @notice previewExitFee 应按当前 epoch 生效策略返回赎回费与净额
+    function test_previewExitFee_appliesCurrentEpochPolicy() public {
+        uint256 amount = 100e6;
+        uint256 epoch = vault.currentEpoch();
+        vm.prank(admin);
+        vault.scheduleFeePolicy(_exitFeePolicy(), epoch);
+
+        (uint256 fee, uint256 netAmount) = vault.previewExitFee(amount);
+        assertEq(fee, (amount * 1000) / 10_000);
+        assertEq(netAmount, amount - fee);
+    }
+
     /// @notice finalizeEpoch 应按年化管理费率按期计提，并将费用分账记入 feeClaimable
     function test_finalizeEpoch_appliesManagementFeeAndAccruesFeeClaimable() public {
         uint256 managerShares = 100e18;

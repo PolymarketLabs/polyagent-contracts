@@ -458,13 +458,13 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, I
     }
 
     function previewEntryFee(uint256 amount) external view override returns (uint256 fee, uint256 netAmount) {
-        fee = 0;
-        netAmount = amount;
+        FeePolicy memory policy = _getFeePolicyForEpoch(_currentEpoch());
+        return _calcFeeAndNetAmount(amount, policy.rates.entryFeeBps);
     }
 
     function previewExitFee(uint256 amount) external view override returns (uint256 fee, uint256 netAmount) {
-        fee = 0;
-        netAmount = amount;
+        FeePolicy memory policy = _getFeePolicyForEpoch(_currentEpoch());
+        return _calcFeeAndNetAmount(amount, policy.rates.exitFeeBps);
     }
 
     function _getFeePolicyForEpoch(uint256 epoch) internal view returns (FeePolicy memory policy) {
@@ -478,10 +478,12 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, I
         revert FeePolicyNotFound();
     }
 
-    function _applyEpochLevelFees(uint256 pricingAum, uint256 sharesAtSettle, FeePolicy memory policy, uint256 deltaSeconds)
-        internal
-        returns (uint256 pricingAumAfterFee)
-    {
+    function _applyEpochLevelFees(
+        uint256 pricingAum,
+        uint256 sharesAtSettle,
+        FeePolicy memory policy,
+        uint256 deltaSeconds
+    ) internal returns (uint256 pricingAumAfterFee) {
         // 管理费按 epoch 时长从年化费率折算。
         uint256 mgmtFee = _calcMgmtFee(pricingAum, policy.rates.mgmtFeeAnnualBps, deltaSeconds);
         if (mgmtFee > pricingAum) {
