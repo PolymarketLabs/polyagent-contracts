@@ -392,6 +392,55 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, I
 
     // ===== 管理员操作 =====
 
+    function setAdmin(address newAdmin) external override onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (newAdmin == address(0)) {
+            revert ZeroAddress();
+        }
+
+        address previousAdmin = admin;
+        if (newAdmin == previousAdmin) {
+            return;
+        }
+
+        _grantRole(DEFAULT_ADMIN_ROLE, newAdmin);
+        _revokeRole(DEFAULT_ADMIN_ROLE, previousAdmin);
+        admin = newAdmin;
+
+        emit AdminUpdated(previousAdmin, newAdmin);
+    }
+
+    function setOperator(address newOperator) external override onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (newOperator == address(0)) {
+            revert ZeroAddress();
+        }
+
+        address previousOperator = operator;
+        if (newOperator == previousOperator) {
+            return;
+        }
+
+        _grantRole(OPERATOR_ROLE, newOperator);
+        _revokeRole(OPERATOR_ROLE, previousOperator);
+        operator = newOperator;
+
+        emit OperatorUpdated(previousOperator, newOperator);
+    }
+
+    function setExecutor(address newExecutor) external override onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (newExecutor == address(0)) {
+            revert ZeroAddress();
+        }
+
+        address previousExecutor = executor;
+        if (newExecutor == previousExecutor) {
+            return;
+        }
+
+        executor = newExecutor;
+
+        emit ExecutorUpdated(previousExecutor, newExecutor);
+    }
+
     function pauseDeposit() external override onlyRole(DEFAULT_ADMIN_ROLE) {
         if (depositPaused) {
             revert DepositPaused();

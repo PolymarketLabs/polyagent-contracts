@@ -20,6 +20,10 @@ abstract contract VaultEvents {
     event ReferrerBound(address indexed investor, address indexed referrer);
     event FeeClaimed(address indexed recipient, address indexed to, uint256 amount);
 
+    event AdminUpdated(address indexed previousAdmin, address indexed newAdmin);
+    event OperatorUpdated(address indexed previousOperator, address indexed newOperator);
+    event ExecutorUpdated(address indexed previousExecutor, address indexed newExecutor);
+
     event DepositPauseStatusUpdated(address indexed admin, bool paused);
     event RedeemPauseStatusUpdated(address indexed admin, bool paused);
 }

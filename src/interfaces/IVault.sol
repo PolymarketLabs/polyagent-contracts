@@ -70,6 +70,18 @@ interface IVault {
     /// @param amount 划转金额
     function transferToExecutor(uint256 amount) external;
 
+    /// @notice 更新默认管理员地址，并迁移 DEFAULT_ADMIN_ROLE
+    /// @param newAdmin 新管理员地址
+    function setAdmin(address newAdmin) external;
+
+    /// @notice 更新运营地址，并迁移 OPERATOR_ROLE
+    /// @param newOperator 新运营地址
+    function setOperator(address newOperator) external;
+
+    /// @notice 更新执行钱包地址
+    /// @param newExecutor 新执行钱包地址
+    function setExecutor(address newExecutor) external;
+
     /// @notice 暂停申购
     function pauseDeposit() external;
     /// @notice 恢复申购
