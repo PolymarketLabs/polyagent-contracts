@@ -60,7 +60,7 @@ contract VaultFlowsTest is Test {
         vault.settleDeposits(epoch, 10);
 
         (, uint256 storedSharesAtSettle, uint256 storedNavPerShare,) = vault.snapshots(epoch);
-        (, , ReqStatus status) = vault.depositRequests(epoch, index);
+        (,, ReqStatus status) = vault.depositRequests(epoch, index);
         (uint256 nextDeposit,, bool depositsDone,) = vault.cursors(epoch);
         assertEq(storedSharesAtSettle, managerShares);
         assertEq(storedNavPerShare, expectedNavPerShare);
@@ -105,8 +105,8 @@ contract VaultFlowsTest is Test {
         vm.prank(operator);
         vault.settleRedeems(epoch, 10);
 
-        (, , ReqStatus depositStatus) = vault.depositRequests(epoch, depositIndex);
-        (, , ReqStatus redeemStatus) = vault.redeemRequests(epoch, redeemIndex);
+        (,, ReqStatus depositStatus) = vault.depositRequests(epoch, depositIndex);
+        (,, ReqStatus redeemStatus) = vault.redeemRequests(epoch, redeemIndex);
         assertEq(uint8(depositStatus), uint8(ReqStatus.Settled));
         assertEq(uint8(redeemStatus), uint8(ReqStatus.Settled));
         assertEq(vault.balanceOf(alice), expectedAliceShares);
@@ -152,8 +152,8 @@ contract VaultFlowsTest is Test {
             vm.prank(operator);
             vault.settleDeposits(epoch2, 10);
 
-            (, , ReqStatus aliceStatus) = vault.depositRequests(epoch2, aliceIndex);
-            (, , ReqStatus bobStatusBefore) = vault.depositRequests(epoch3, bobIndex);
+            (,, ReqStatus aliceStatus) = vault.depositRequests(epoch2, aliceIndex);
+            (,, ReqStatus bobStatusBefore) = vault.depositRequests(epoch3, bobIndex);
             assertEq(uint8(aliceStatus), uint8(ReqStatus.Settled));
             assertEq(uint8(bobStatusBefore), uint8(ReqStatus.Pending));
             assertEq(vault.balanceOf(alice), expectedAliceShares);
@@ -172,7 +172,7 @@ contract VaultFlowsTest is Test {
             vm.prank(operator);
             vault.settleDeposits(epoch3, 10);
 
-            (, , ReqStatus bobStatusAfter) = vault.depositRequests(epoch3, bobIndex);
+            (,, ReqStatus bobStatusAfter) = vault.depositRequests(epoch3, bobIndex);
             assertEq(uint8(bobStatusAfter), uint8(ReqStatus.Settled));
             assertEq(vault.balanceOf(bob), expectedBobShares);
         }
@@ -193,8 +193,8 @@ contract VaultFlowsTest is Test {
         vm.prank(operator);
         vault.finalizeEpoch(epoch2, 700e6);
 
-        (, , uint256 nav1,) = vault.snapshots(epoch1);
-        (, , uint256 nav2,) = vault.snapshots(epoch2);
+        (,, uint256 nav1,) = vault.snapshots(epoch1);
+        (,, uint256 nav2,) = vault.snapshots(epoch2);
         assertGt(nav2, nav1);
     }
 

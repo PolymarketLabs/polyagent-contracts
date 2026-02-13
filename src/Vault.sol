@@ -22,6 +22,7 @@ import {VaultErrors} from "./vault/VaultErrors.sol";
 contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, IVault, VaultEvents, VaultErrors {
     using SafeERC20 for IERC20;
     uint256 private constant NAV_SCALE = 1e18; // 采用 1e18 精度记录 NAV，避免与份额 decimals 耦合
+    uint256 private constant BPS_DENOMINATOR = 10_000;
 
     // ===== 角色常量 =====
     bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
@@ -47,7 +48,7 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, I
 
     mapping(uint256 => DepositRequest[]) public depositRequests; // epoch => 申购请求列表
     mapping(uint256 => RedeemRequest[]) public redeemRequests; // epoch => 赎回请求列表
-    
+
     mapping(uint256 => uint256) public netRequestedDepositAssets; // epoch => 净申购总资产
     mapping(uint256 => uint256) public netRequestedRedeemShares; // epoch => 净赎回总份额
 
@@ -126,9 +127,7 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, I
         index = depositRequests[epoch].length;
 
         // 按严格 CEI：先写入状态，再进行外部交互
-        depositRequests[epoch].push(
-            DepositRequest({investor: msg.sender, amount: amount, status: ReqStatus.Pending})
-        );
+        depositRequests[epoch].push(DepositRequest({investor: msg.sender, amount: amount, status: ReqStatus.Pending}));
         netRequestedDepositAssets[epoch] += amount;
 
         // 外部交互放在最后；若转账失败，整笔交易回滚，已写状态不会保留
@@ -154,9 +153,7 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, I
         index = redeemRequests[epoch].length;
 
         // 请求入队，后续由结算流程统一处理
-        redeemRequests[epoch].push(
-            RedeemRequest({investor: msg.sender, shares: shares, status: ReqStatus.Pending})
-        );
+        redeemRequests[epoch].push(RedeemRequest({investor: msg.sender, shares: shares, status: ReqStatus.Pending}));
         netRequestedRedeemShares[epoch] += shares;
 
         emit RedeemRequested(epoch, index, msg.sender, shares);
@@ -298,6 +295,8 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, I
         if (navPerShare == 0) {
             revert InvalidFinalizeEpoch();
         }
+        // 未命中 checkpoint 时 policy 为零值，即不收取申购费。
+        (, FeePolicy memory policy) = _tryGetFeePolicyForEpoch(epoch);
 
         uint256 end = start + maxCount;
         if (end > len) {
@@ -309,12 +308,7 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, I
             if (req.status != ReqStatus.Pending) {
                 continue;
             }
-
-            uint256 shares = (req.amount * NAV_SCALE) / navPerShare;
-            req.status = ReqStatus.Settled;
-            _mint(req.investor, shares);
-
-            emit DepositSettled(epoch, i, req.investor, shares);
+            _settleDepositRequest(epoch, i, req, navPerShare, policy);
         }
 
         cursor.nextDeposit = end;
@@ -460,6 +454,96 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, I
     function previewExitFee(uint256 amount) external view override returns (uint256 fee, uint256 netAmount) {
         fee = 0;
         netAmount = amount;
+    }
+
+    function _tryGetFeePolicyForEpoch(uint256 epoch) internal view returns (bool found, FeePolicy memory policy) {
+        uint256 len = feePolicyCheckpoints.length;
+        for (uint256 i = len; i > 0; i--) {
+            FeePolicyCheckpoint storage checkpoint = feePolicyCheckpoints[i - 1];
+            if (checkpoint.effectiveEpoch <= epoch) {
+                return (true, checkpoint.policy);
+            }
+        }
+        return (false, policy);
+    }
+
+    function _settleDepositRequest(
+        uint256 epoch,
+        uint256 requestIndex,
+        DepositRequest storage req,
+        uint256 navPerShare,
+        FeePolicy memory policy
+    ) internal {
+        uint16 entryFeeBps = policy.rates.entryFeeBps;
+        (uint256 entryFee, uint256 netAmount) = _calcFeeAndNetAmount(req.amount, entryFeeBps);
+        if (entryFee > 0) {
+            _accrueEntryFee(policy, req.investor, entryFee);
+        }
+
+        uint256 shares = (netAmount * NAV_SCALE) / navPerShare;
+        req.status = ReqStatus.Settled;
+        _mint(req.investor, shares);
+
+        emit DepositSettled(epoch, requestIndex, req.investor, shares);
+    }
+
+    function _accrueEntryFee(FeePolicy memory policy, address investor, uint256 fee) internal {
+        if (fee == 0) {
+            return;
+        }
+
+        (uint256 platformAmount, uint256 referrerAmount, uint256 managerAmount, uint256 remainderAmount) =
+            _splitFee(fee, policy);
+
+        address platformRecipient = policy.recipients.platform;
+        address managerRecipient = policy.recipients.manager;
+        address reserveRecipient = policy.recipients.reserve;
+        address referrerRecipient = referrers[investor];
+        if (referrerRecipient == address(0)) {
+            referrerRecipient = reserveRecipient;
+        }
+
+        _accrueFee(platformRecipient, platformAmount);
+        _accrueFee(referrerRecipient, referrerAmount);
+        _accrueFee(managerRecipient, managerAmount);
+        _accrueFee(reserveRecipient, remainderAmount);
+    }
+
+    function _calcFeeAndNetAmount(uint256 amount, uint16 feeBps)
+        internal
+        pure
+        returns (uint256 fee, uint256 netAmount)
+    {
+        if (feeBps == 0) {
+            return (0, amount);
+        }
+
+        fee = (amount * feeBps) / BPS_DENOMINATOR;
+        netAmount = amount - fee;
+    }
+
+    function _splitFee(uint256 fee, FeePolicy memory policy)
+        internal
+        pure
+        returns (uint256 platformAmount, uint256 referrerAmount, uint256 managerAmount, uint256 remainderAmount)
+    {
+        if (fee == 0) {
+            return (0, 0, 0, 0);
+        }
+
+        platformAmount = (fee * policy.entrySplit.platformBps) / BPS_DENOMINATOR;
+        referrerAmount = (fee * policy.entrySplit.referrerBps) / BPS_DENOMINATOR;
+        managerAmount = (fee * policy.entrySplit.managerBps) / BPS_DENOMINATOR;
+
+        uint256 distributed = platformAmount + referrerAmount + managerAmount;
+        remainderAmount = fee - distributed;
+    }
+
+    function _accrueFee(address recipient, uint256 amount) internal {
+        if (recipient == address(0) || amount == 0) {
+            return;
+        }
+        feeClaimable[recipient] += amount;
     }
 
     /// @dev 仅在首次绑定时写入推荐人；禁止自荐与互荐（A<->B）

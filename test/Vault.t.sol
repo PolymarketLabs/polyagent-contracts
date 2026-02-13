@@ -4,7 +4,7 @@ pragma solidity ^0.8.30;
 import {Test} from "forge-std/Test.sol";
 import {Vault} from "../src/Vault.sol";
 import {VaultErrors} from "../src/vault/VaultErrors.sol";
-import {ReqStatus} from "../src/vault/VaultTypes.sol";
+import {ReqStatus, FeePolicy, FeeRateConfig, SplitConfig, FeeRecipientConfig} from "../src/vault/VaultTypes.sol";
 import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
 import {USDC} from "./mocks/USDC.sol";
 import {UpgradeableBeacon} from "@openzeppelin/contracts/proxy/beacon/UpgradeableBeacon.sol";
@@ -384,8 +384,8 @@ contract VaultTest is Test {
         vm.prank(operator);
         vault.settleDeposits(epoch, 1);
 
-        (, , ReqStatus aliceStatus) = vault.depositRequests(epoch, aliceIndex);
-        (, , ReqStatus bobStatus) = vault.depositRequests(epoch, bobIndex);
+        (,, ReqStatus aliceStatus) = vault.depositRequests(epoch, aliceIndex);
+        (,, ReqStatus bobStatus) = vault.depositRequests(epoch, bobIndex);
         assertEq(uint8(aliceStatus), uint8(ReqStatus.Settled));
         assertEq(uint8(bobStatus), uint8(ReqStatus.Canceled));
         assertEq(vault.balanceOf(alice), expectedAliceShares);
@@ -408,6 +408,74 @@ contract VaultTest is Test {
         vm.prank(operator);
         vm.expectRevert(VaultErrors.DepositsSettlementCompleted.selector);
         vault.settleDeposits(epoch, 1);
+    }
+
+    /// @notice settleDeposits 应按 ENTRY 费率扣费，并把推荐人分账记入 feeClaimable
+    function test_settleDeposits_appliesEntryFeeAndAccruesFeeClaimable_withReferrer() public {
+        uint256 managerShares = 200e18;
+        uint256 depositAmount = 100e6;
+        uint256 totalAum = 500e6;
+        deal(address(vault), manager, managerShares, true);
+
+        vm.prank(address(this));
+        usdc.transfer(alice, depositAmount);
+        vm.startPrank(alice);
+        usdc.approve(address(vault), depositAmount);
+        (uint256 epoch,) = vault.requestDeposit(depositAmount, bob);
+        vm.stopPrank();
+
+        vm.prank(admin);
+        vault.scheduleFeePolicy(_entryFeePolicy(), epoch);
+
+        vm.warp(block.timestamp + (2 * SECONDS_PER_EPOCH));
+        vm.prank(operator);
+        vault.finalizeEpoch(epoch, totalAum);
+
+        uint256 pricingAum = totalAum - vault.netRequestedDepositAssets(epoch);
+        uint256 navPerShare = (pricingAum * 1e18) / managerShares;
+        uint256 entryFee = (depositAmount * 1000) / 10_000;
+        uint256 netAmount = depositAmount - entryFee;
+        uint256 expectedShares = (netAmount * 1e18) / navPerShare;
+
+        vm.prank(operator);
+        vault.settleDeposits(epoch, 10);
+
+        assertEq(vault.balanceOf(alice), expectedShares);
+        assertEq(vault.feeClaimableOf(admin), (entryFee * 3000) / 10_000);
+        assertEq(vault.feeClaimableOf(bob), (entryFee * 2000) / 10_000);
+        assertEq(vault.feeClaimableOf(manager), (entryFee * 5000) / 10_000);
+        assertEq(vault.feeClaimableOf(executor), 0);
+    }
+
+    /// @notice 无推荐人时，推荐人分账应回流到 reserve
+    function test_settleDeposits_appliesEntryFeeAndRoutesReferrerShareToReserve_whenNoReferrer() public {
+        uint256 managerShares = 200e18;
+        uint256 depositAmount = 100e6;
+        uint256 totalAum = 500e6;
+        deal(address(vault), manager, managerShares, true);
+
+        vm.prank(address(this));
+        usdc.transfer(alice, depositAmount);
+        vm.startPrank(alice);
+        usdc.approve(address(vault), depositAmount);
+        (uint256 epoch,) = vault.requestDeposit(depositAmount, address(0));
+        vm.stopPrank();
+
+        vm.prank(admin);
+        vault.scheduleFeePolicy(_entryFeePolicy(), epoch);
+
+        vm.warp(block.timestamp + (2 * SECONDS_PER_EPOCH));
+        vm.prank(operator);
+        vault.finalizeEpoch(epoch, totalAum);
+
+        uint256 entryFee = (depositAmount * 1000) / 10_000;
+        vm.prank(operator);
+        vault.settleDeposits(epoch, 10);
+
+        assertEq(vault.feeClaimableOf(admin), (entryFee * 3000) / 10_000);
+        assertEq(vault.feeClaimableOf(manager), (entryFee * 5000) / 10_000);
+        assertEq(vault.feeClaimableOf(executor), (entryFee * 2000) / 10_000);
+        assertEq(vault.feeClaimableOf(bob), 0);
     }
 
     /// @notice 未封账 epoch 调用 settleRedeems 应回滚
@@ -458,8 +526,8 @@ contract VaultTest is Test {
         vm.prank(operator);
         vault.settleRedeems(epoch, 1);
 
-        (, , ReqStatus aliceStatus) = vault.redeemRequests(epoch, aliceIndex);
-        (, , ReqStatus bobStatus) = vault.redeemRequests(epoch, bobIndex);
+        (,, ReqStatus aliceStatus) = vault.redeemRequests(epoch, aliceIndex);
+        (,, ReqStatus bobStatus) = vault.redeemRequests(epoch, bobIndex);
         assertEq(uint8(aliceStatus), uint8(ReqStatus.Settled));
         assertEq(uint8(bobStatus), uint8(ReqStatus.Canceled));
         assertEq(vault.claimableAssets(alice), expectedClaimableAssets);
@@ -660,6 +728,17 @@ contract VaultTest is Test {
     function _setClaimableAsset(address investor, uint256 amount) internal {
         bytes32 slot = keccak256(abi.encode(investor, CLAIMABLE_ASSETS_MAPPING_SLOT));
         vm.store(address(vault), slot, bytes32(amount));
+    }
+
+    function _entryFeePolicy() internal view returns (FeePolicy memory policy) {
+        policy = FeePolicy({
+            rates: FeeRateConfig({entryFeeBps: 1000, exitFeeBps: 0, mgmtFeeAnnualBps: 0, performanceFeeBps: 0}),
+            entrySplit: SplitConfig({platformBps: 3000, referrerBps: 2000, managerBps: 5000}),
+            exitSplit: SplitConfig({platformBps: 0, referrerBps: 0, managerBps: 10_000}),
+            mgmtSplit: SplitConfig({platformBps: 0, referrerBps: 0, managerBps: 10_000}),
+            performanceSplit: SplitConfig({platformBps: 0, referrerBps: 0, managerBps: 10_000}),
+            recipients: FeeRecipientConfig({platform: admin, manager: manager, reserve: executor})
+        });
     }
 
     // TODO(vault): 待业务函数实现后补充以下测试（函数名预留 + 中文说明）
