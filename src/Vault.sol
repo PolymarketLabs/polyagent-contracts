@@ -13,6 +13,8 @@ import {
     ReqStatus,
     EpochSnapshot,
     SettlementCursor,
+    SplitConfig,
+    FeeRecipientConfig,
     FeePolicy,
     FeePolicyCheckpoint
 } from "./vault/VaultTypes.sol";
@@ -295,8 +297,7 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, I
         if (navPerShare == 0) {
             revert InvalidFinalizeEpoch();
         }
-        // 未命中 checkpoint 时 policy 为零值，即不收取申购费。
-        (, FeePolicy memory policy) = _tryGetFeePolicyForEpoch(epoch);
+        FeePolicy memory policy = _getFeePolicyForEpoch(epoch);
 
         uint256 end = start + maxCount;
         if (end > len) {
@@ -348,6 +349,7 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, I
         if (navPerShare == 0) {
             revert InvalidFinalizeEpoch();
         }
+        FeePolicy memory policy = _getFeePolicyForEpoch(epoch);
 
         uint256 end = start + maxCount;
         if (end > len) {
@@ -359,14 +361,7 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, I
             if (req.status != ReqStatus.Pending) {
                 continue;
             }
-
-            // 先按 NAV 计算可兑资产，再销毁已锁仓份额，资产通过 claimable 走 Pull 模式领取。
-            uint256 assets = (req.shares * navPerShare) / NAV_SCALE;
-            req.status = ReqStatus.Settled;
-            _burn(address(this), req.shares);
-            claimableAssets[req.investor] += assets;
-
-            emit RedeemSettled(epoch, i, req.investor, assets);
+            _settleRedeemRequest(epoch, i, req, navPerShare, policy);
         }
 
         cursor.nextRedeem = end;
@@ -456,15 +451,15 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, I
         netAmount = amount;
     }
 
-    function _tryGetFeePolicyForEpoch(uint256 epoch) internal view returns (bool found, FeePolicy memory policy) {
+    function _getFeePolicyForEpoch(uint256 epoch) internal view returns (FeePolicy memory policy) {
         uint256 len = feePolicyCheckpoints.length;
         for (uint256 i = len; i > 0; i--) {
             FeePolicyCheckpoint storage checkpoint = feePolicyCheckpoints[i - 1];
             if (checkpoint.effectiveEpoch <= epoch) {
-                return (true, checkpoint.policy);
+                return checkpoint.policy;
             }
         }
-        return (false, policy);
+        revert FeePolicyNotFound();
     }
 
     function _settleDepositRequest(
@@ -477,7 +472,7 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, I
         uint16 entryFeeBps = policy.rates.entryFeeBps;
         (uint256 entryFee, uint256 netAmount) = _calcFeeAndNetAmount(req.amount, entryFeeBps);
         if (entryFee > 0) {
-            _accrueEntryFee(policy, req.investor, entryFee);
+            _accrueFeeBySplit(policy.recipients, policy.entrySplit, req.investor, entryFee);
         }
 
         uint256 shares = (netAmount * NAV_SCALE) / navPerShare;
@@ -487,17 +482,44 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, I
         emit DepositSettled(epoch, requestIndex, req.investor, shares);
     }
 
-    function _accrueEntryFee(FeePolicy memory policy, address investor, uint256 fee) internal {
+    function _settleRedeemRequest(
+        uint256 epoch,
+        uint256 requestIndex,
+        RedeemRequest storage req,
+        uint256 navPerShare,
+        FeePolicy memory policy
+    ) internal {
+        // 先按 NAV 计算赎回总资产，再扣除 EXIT 费用，净额进入 claimable 供用户领取。
+        uint256 grossAssets = (req.shares * navPerShare) / NAV_SCALE;
+        uint16 exitFeeBps = policy.rates.exitFeeBps;
+        (uint256 exitFee, uint256 netAssets) = _calcFeeAndNetAmount(grossAssets, exitFeeBps);
+        if (exitFee > 0) {
+            _accrueFeeBySplit(policy.recipients, policy.exitSplit, req.investor, exitFee);
+        }
+
+        req.status = ReqStatus.Settled;
+        _burn(address(this), req.shares);
+        claimableAssets[req.investor] += netAssets;
+
+        emit RedeemSettled(epoch, requestIndex, req.investor, netAssets);
+    }
+
+    function _accrueFeeBySplit(
+        FeeRecipientConfig memory recipients,
+        SplitConfig memory splitConfig,
+        address investor,
+        uint256 fee
+    ) internal {
         if (fee == 0) {
             return;
         }
 
         (uint256 platformAmount, uint256 referrerAmount, uint256 managerAmount, uint256 remainderAmount) =
-            _splitFee(fee, policy);
+            _splitFee(fee, splitConfig);
 
-        address platformRecipient = policy.recipients.platform;
-        address managerRecipient = policy.recipients.manager;
-        address reserveRecipient = policy.recipients.reserve;
+        address platformRecipient = recipients.platform;
+        address managerRecipient = recipients.manager;
+        address reserveRecipient = recipients.reserve;
         address referrerRecipient = referrers[investor];
         if (referrerRecipient == address(0)) {
             referrerRecipient = reserveRecipient;
@@ -522,7 +544,7 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, I
         netAmount = amount - fee;
     }
 
-    function _splitFee(uint256 fee, FeePolicy memory policy)
+    function _splitFee(uint256 fee, SplitConfig memory splitConfig)
         internal
         pure
         returns (uint256 platformAmount, uint256 referrerAmount, uint256 managerAmount, uint256 remainderAmount)
@@ -531,9 +553,9 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, I
             return (0, 0, 0, 0);
         }
 
-        platformAmount = (fee * policy.entrySplit.platformBps) / BPS_DENOMINATOR;
-        referrerAmount = (fee * policy.entrySplit.referrerBps) / BPS_DENOMINATOR;
-        managerAmount = (fee * policy.entrySplit.managerBps) / BPS_DENOMINATOR;
+        platformAmount = (fee * splitConfig.platformBps) / BPS_DENOMINATOR;
+        referrerAmount = (fee * splitConfig.referrerBps) / BPS_DENOMINATOR;
+        managerAmount = (fee * splitConfig.managerBps) / BPS_DENOMINATOR;
 
         uint256 distributed = platformAmount + referrerAmount + managerAmount;
         remainderAmount = fee - distributed;

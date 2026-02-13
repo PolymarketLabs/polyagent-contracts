@@ -4,7 +4,7 @@ pragma solidity ^0.8.30;
 import {Test} from "forge-std/Test.sol";
 import {Vault} from "../src/Vault.sol";
 import {VaultFactory} from "../src/VaultFactory.sol";
-import {ReqStatus} from "../src/vault/VaultTypes.sol";
+import {ReqStatus, FeePolicy, FeeRateConfig, SplitConfig, FeeRecipientConfig} from "../src/vault/VaultTypes.sol";
 import {USDC} from "./mocks/USDC.sol";
 import {UpgradeableBeacon} from "@openzeppelin/contracts/proxy/beacon/UpgradeableBeacon.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
@@ -48,6 +48,9 @@ contract VaultFlowsTest is Test {
         (uint256 epoch, uint256 index) = vault.requestDeposit(depositAmount, address(0));
         vm.stopPrank();
 
+        vm.prank(admin);
+        vault.scheduleFeePolicy(_zeroFeePolicy(), epoch);
+
         vm.warp(block.timestamp + (2 * SECONDS_PER_EPOCH));
         vm.prank(operator);
         vault.finalizeEpoch(epoch, totalAum);
@@ -89,6 +92,9 @@ contract VaultFlowsTest is Test {
 
         vm.prank(bob);
         (, uint256 redeemIndex) = vault.requestRedeem(bobShares);
+
+        vm.prank(admin);
+        vault.scheduleFeePolicy(_zeroFeePolicy(), epoch);
 
         vm.warp(block.timestamp + (2 * SECONDS_PER_EPOCH));
         vm.prank(operator);
@@ -138,6 +144,11 @@ contract VaultFlowsTest is Test {
         (uint256 epoch3, uint256 bobIndex) = vault.requestDeposit(50e6, address(0));
         vm.stopPrank();
         assertEq(epoch3, epoch2 + 1);
+
+        vm.prank(admin);
+        vault.scheduleFeePolicy(_zeroFeePolicy(), epoch2);
+        vm.prank(admin);
+        vault.scheduleFeePolicy(_zeroFeePolicy(), epoch3);
 
         // 延迟到下一天再回头封 epoch2
         vm.warp(block.timestamp + SECONDS_PER_EPOCH);
@@ -219,5 +230,16 @@ contract VaultFlowsTest is Test {
         vaultProxy = targetFactory.createFund(
             "Alpha Fund Share", "AFS", baseAsset, _manager, _admin, _operator, _executor, _secondsPerEpoch
         );
+    }
+
+    function _zeroFeePolicy() internal view returns (FeePolicy memory policy) {
+        policy = FeePolicy({
+            rates: FeeRateConfig({entryFeeBps: 0, exitFeeBps: 0, mgmtFeeAnnualBps: 0, performanceFeeBps: 0}),
+            entrySplit: SplitConfig({platformBps: 0, referrerBps: 0, managerBps: 0}),
+            exitSplit: SplitConfig({platformBps: 0, referrerBps: 0, managerBps: 0}),
+            mgmtSplit: SplitConfig({platformBps: 0, referrerBps: 0, managerBps: 0}),
+            performanceSplit: SplitConfig({platformBps: 0, referrerBps: 0, managerBps: 0}),
+            recipients: FeeRecipientConfig({platform: admin, manager: manager, reserve: executor})
+        });
     }
 }

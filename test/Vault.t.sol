@@ -372,6 +372,10 @@ contract VaultTest is Test {
         uint256 sharesAtSettle = 200e18;
         uint256 totalAum = 500e6;
         deal(address(vault), manager, sharesAtSettle, true);
+
+        vm.prank(admin);
+        vault.scheduleFeePolicy(_zeroFeePolicy(), epoch);
+
         vm.warp(block.timestamp + (2 * SECONDS_PER_EPOCH));
 
         vm.prank(operator);
@@ -515,6 +519,10 @@ contract VaultTest is Test {
         vm.stopPrank();
 
         uint256 totalAum = 500e6;
+
+        vm.prank(admin);
+        vault.scheduleFeePolicy(_zeroFeePolicy(), epoch);
+
         vm.warp(block.timestamp + (2 * SECONDS_PER_EPOCH));
 
         vm.prank(operator);
@@ -551,6 +559,42 @@ contract VaultTest is Test {
         vm.prank(operator);
         vm.expectRevert(VaultErrors.RedeemsSettlementCompleted.selector);
         vault.settleRedeems(epoch, 1);
+    }
+
+    /// @notice settleRedeems 应按 EXIT 费率扣费，并把推荐人分账记入 feeClaimable
+    function test_settleRedeems_appliesExitFeeAndAccruesFeeClaimable_withReferrer() public {
+        uint256 aliceShares = 10e18;
+        uint256 managerShares = 190e18;
+        uint256 totalAum = 500e6;
+        deal(address(vault), alice, aliceShares, true);
+        deal(address(vault), manager, managerShares, true);
+
+        vm.prank(alice);
+        vault.bindReferrer(bob);
+
+        vm.prank(alice);
+        (uint256 epoch,) = vault.requestRedeem(aliceShares);
+
+        vm.prank(admin);
+        vault.scheduleFeePolicy(_exitFeePolicy(), epoch);
+
+        vm.warp(block.timestamp + (2 * SECONDS_PER_EPOCH));
+        vm.prank(operator);
+        vault.finalizeEpoch(epoch, totalAum);
+
+        uint256 navPerShare = (totalAum * 1e18) / (aliceShares + managerShares);
+        uint256 grossAssets = (aliceShares * navPerShare) / 1e18;
+        uint256 exitFee = (grossAssets * 1000) / 10_000;
+        uint256 netAssets = grossAssets - exitFee;
+
+        vm.prank(operator);
+        vault.settleRedeems(epoch, 10);
+
+        assertEq(vault.claimableAssets(alice), netAssets);
+        assertEq(vault.feeClaimableOf(admin), (exitFee * 3000) / 10_000);
+        assertEq(vault.feeClaimableOf(bob), (exitFee * 2000) / 10_000);
+        assertEq(vault.feeClaimableOf(manager), (exitFee * 5000) / 10_000);
+        assertEq(vault.feeClaimableOf(executor), 0);
     }
 
     /// @notice 非 operator 调用 transferToExecutor 应回滚
@@ -737,6 +781,28 @@ contract VaultTest is Test {
             exitSplit: SplitConfig({platformBps: 0, referrerBps: 0, managerBps: 10_000}),
             mgmtSplit: SplitConfig({platformBps: 0, referrerBps: 0, managerBps: 10_000}),
             performanceSplit: SplitConfig({platformBps: 0, referrerBps: 0, managerBps: 10_000}),
+            recipients: FeeRecipientConfig({platform: admin, manager: manager, reserve: executor})
+        });
+    }
+
+    function _exitFeePolicy() internal view returns (FeePolicy memory policy) {
+        policy = FeePolicy({
+            rates: FeeRateConfig({entryFeeBps: 0, exitFeeBps: 1000, mgmtFeeAnnualBps: 0, performanceFeeBps: 0}),
+            entrySplit: SplitConfig({platformBps: 0, referrerBps: 0, managerBps: 10_000}),
+            exitSplit: SplitConfig({platformBps: 3000, referrerBps: 2000, managerBps: 5000}),
+            mgmtSplit: SplitConfig({platformBps: 0, referrerBps: 0, managerBps: 10_000}),
+            performanceSplit: SplitConfig({platformBps: 0, referrerBps: 0, managerBps: 10_000}),
+            recipients: FeeRecipientConfig({platform: admin, manager: manager, reserve: executor})
+        });
+    }
+
+    function _zeroFeePolicy() internal view returns (FeePolicy memory policy) {
+        policy = FeePolicy({
+            rates: FeeRateConfig({entryFeeBps: 0, exitFeeBps: 0, mgmtFeeAnnualBps: 0, performanceFeeBps: 0}),
+            entrySplit: SplitConfig({platformBps: 0, referrerBps: 0, managerBps: 0}),
+            exitSplit: SplitConfig({platformBps: 0, referrerBps: 0, managerBps: 0}),
+            mgmtSplit: SplitConfig({platformBps: 0, referrerBps: 0, managerBps: 0}),
+            performanceSplit: SplitConfig({platformBps: 0, referrerBps: 0, managerBps: 0}),
             recipients: FeeRecipientConfig({platform: admin, manager: manager, reserve: executor})
         });
     }
