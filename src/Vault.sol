@@ -442,7 +442,22 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, I
         _bindReferrerIfUnbound(msg.sender, referrer);
     }
 
-    function claimFee(address to) external override nonReentrant returns (uint256 amount) {}
+    function claimFee(address to) external override nonReentrant returns (uint256 amount) {
+        if (to == address(0)) {
+            revert ZeroAddress();
+        }
+
+        amount = feeClaimable[msg.sender];
+        if (amount == 0) {
+            revert NoClaimableFee();
+        }
+
+        // 先清零可领取余额，再执行转账，遵循 CEI。
+        feeClaimable[msg.sender] = 0;
+        IERC20(baseAsset).safeTransfer(to, amount);
+
+        emit FeeClaimed(msg.sender, to, amount);
+    }
 
     // ===== 只读查询 =====
 

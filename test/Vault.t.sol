@@ -16,6 +16,7 @@ contract VaultTest is Test {
     uint256 public constant SECONDS_PER_EPOCH = 86400;
     uint256 internal constant SNAPSHOTS_MAPPING_SLOT = 13; // Vault.snapshots 的映射槽位（需与 Vault 存储布局保持一致）
     uint256 internal constant CLAIMABLE_ASSETS_MAPPING_SLOT = 8; // Vault.claimableAssets 的映射槽位（需与 Vault 存储布局保持一致）
+    uint256 internal constant FEE_CLAIMABLE_MAPPING_SLOT = 18; // Vault.feeClaimable 的映射槽位（需与 Vault 存储布局保持一致）
 
     USDC public usdc;
     VaultFactory public factory;
@@ -31,6 +32,7 @@ contract VaultTest is Test {
     address bob = makeAddr("bob");
 
     event Claimed(address indexed investor, address indexed to, uint256 amount);
+    event FeeClaimed(address indexed recipient, address indexed to, uint256 amount);
     event EpochFinalized(uint256 indexed epoch, uint256 totalAum, uint256 sharesAtSettle, uint256 navPerShare);
 
     function setUp() public {
@@ -886,6 +888,39 @@ contract VaultTest is Test {
         assertEq(usdc.balanceOf(bob), 0);
     }
 
+    /// @notice claimFee 应转出可领取费用并触发 FeeClaimed
+    function test_claimFee_transfersFeeAndEmitsEvent() public {
+        uint256 amount = 100e6;
+        vm.prank(address(this));
+        usdc.transfer(address(vault), amount);
+        _setFeeClaimable(alice, amount);
+
+        vm.prank(alice);
+        vm.expectEmit(true, true, true, true);
+        emit FeeClaimed(alice, bob, amount);
+        uint256 claimedAmount = vault.claimFee(bob);
+
+        assertEq(claimedAmount, amount);
+        assertEq(vault.feeClaimableOf(alice), 0);
+        assertEq(usdc.balanceOf(bob), amount);
+    }
+
+    /// @notice claimFee 在无可领取费用时应回滚
+    function test_claimFee_reverts_whenNoClaimableFee() public {
+        vm.prank(alice);
+        vm.expectRevert(VaultErrors.NoClaimableFee.selector);
+        vault.claimFee(bob);
+    }
+
+    /// @notice claimFee 的收款地址为零地址时应回滚
+    function test_claimFee_reverts_whenToIsZeroAddress() public {
+        _setFeeClaimable(alice, 1);
+
+        vm.prank(alice);
+        vm.expectRevert(VaultErrors.ZeroAddress.selector);
+        vault.claimFee(address(0));
+    }
+
     /// @notice 非 operator 调用 finalizeEpoch 应回滚
     function test_finalizeEpoch_reverts_whenCalledByNonOperator() public {
         uint256 epoch = vault.currentEpoch() - 1;
@@ -1028,6 +1063,11 @@ contract VaultTest is Test {
 
     function _setClaimableAsset(address investor, uint256 amount) internal {
         bytes32 slot = keccak256(abi.encode(investor, CLAIMABLE_ASSETS_MAPPING_SLOT));
+        vm.store(address(vault), slot, bytes32(amount));
+    }
+
+    function _setFeeClaimable(address recipient, uint256 amount) internal {
+        bytes32 slot = keccak256(abi.encode(recipient, FEE_CLAIMABLE_MAPPING_SLOT));
         vm.store(address(vault), slot, bytes32(amount));
     }
 
