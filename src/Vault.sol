@@ -469,9 +469,13 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, I
         return _getInitializedVersion();
     }
 
-    function depositRequestCount(uint256 epoch) external view override returns (uint256) {}
+    function depositRequestCount(uint256 epoch) external view override returns (uint256) {
+        return depositRequests[epoch].length;
+    }
 
-    function redeemRequestCount(uint256 epoch) external view override returns (uint256) {}
+    function redeemRequestCount(uint256 epoch) external view override returns (uint256) {
+        return redeemRequests[epoch].length;
+    }
 
     function referrerOf(address investor) external view override returns (address) {
         return referrers[investor];

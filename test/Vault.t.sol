@@ -229,6 +229,47 @@ contract VaultTest is Test {
         vault.requestRedeem(0);
     }
 
+    /// @notice depositRequestCount 应返回指定 epoch 的申购请求条数
+    function test_depositRequestCount_returnsPerEpochLength() public {
+        uint256 aliceAmount = 100e6;
+        uint256 bobAmount = 50e6;
+
+        vm.prank(address(this));
+        usdc.transfer(alice, aliceAmount);
+        vm.prank(address(this));
+        usdc.transfer(bob, bobAmount);
+
+        vm.startPrank(alice);
+        usdc.approve(address(vault), aliceAmount);
+        (uint256 epoch,) = vault.requestDeposit(aliceAmount, address(0));
+        vm.stopPrank();
+
+        vm.startPrank(bob);
+        usdc.approve(address(vault), bobAmount);
+        vault.requestDeposit(bobAmount, address(0));
+        vm.stopPrank();
+
+        assertEq(vault.depositRequestCount(epoch), 2);
+        assertEq(vault.depositRequestCount(epoch + 1), 0);
+    }
+
+    /// @notice redeemRequestCount 应返回指定 epoch 的赎回请求条数
+    function test_redeemRequestCount_returnsPerEpochLength() public {
+        uint256 aliceShares = 10e18;
+        uint256 bobShares = 5e18;
+        deal(address(vault), alice, aliceShares, true);
+        deal(address(vault), bob, bobShares, true);
+
+        vm.prank(alice);
+        (uint256 epoch,) = vault.requestRedeem(aliceShares);
+
+        vm.prank(bob);
+        vault.requestRedeem(bobShares);
+
+        assertEq(vault.redeemRequestCount(epoch), 2);
+        assertEq(vault.redeemRequestCount(epoch + 1), 0);
+    }
+
     /// @notice 申购暂停期间，requestDeposit 应回滚
     function test_requestDeposit_reverts_whenDepositPaused() public {
         uint256 amount = 100e6;
@@ -1125,12 +1166,4 @@ contract VaultTest is Test {
             recipients: FeeRecipientConfig({platform: admin, manager: manager, reserve: executor})
         });
     }
-
-    // TODO(vault): 待业务函数实现后补充以下测试（函数名预留 + 中文说明）
-    // function test_settleDeposits_processesBatchAndUpdatesCursor() public {} // 申购批结算应推进游标并更新状态
-    // function test_settleRedeems_processesBatchAndUpdatesCursor() public {} // 赎回批结算应推进游标并更新状态
-    // function test_transferToExecutor_reverts_whenCalledByNonOperator() public {} // 非 operator 划转执行钱包应回滚
-    // function test_transferToExecutor_transfersBaseAssetToExecutor() public {} // operator 划转执行钱包应成功转账
-    // function test_depositRequestCount_returnsPerEpochLength() public {} // depositRequestCount 应返回对应 epoch 请求数
-    // function test_redeemRequestCount_returnsPerEpochLength() public {} // redeemRequestCount 应返回对应 epoch 请求数
 }
