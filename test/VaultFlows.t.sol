@@ -4,6 +4,7 @@ pragma solidity ^0.8.30;
 import {Test} from "forge-std/Test.sol";
 import {Vault} from "../src/Vault.sol";
 import {VaultFactory} from "../src/VaultFactory.sol";
+import {VaultErrors} from "../src/vault/VaultErrors.sol";
 import {ReqStatus, FeePolicy, FeeRateConfig, SplitConfig, FeeRecipientConfig} from "../src/vault/VaultTypes.sol";
 import {USDC} from "./mocks/USDC.sol";
 import {UpgradeableBeacon} from "@openzeppelin/contracts/proxy/beacon/UpgradeableBeacon.sol";
@@ -212,6 +213,162 @@ contract VaultFlowsTest is Test {
         assertGt(nav2, nav1);
     }
 
+    /// @notice 未配置 fee policy 时，封账应回滚，避免进入不确定收费状态
+    function test_flow_finalize_reverts_whenNoFeePolicyConfigured() public {
+        Vault localVault = Vault(_createFund(factory, address(usdc), manager, admin, operator, executor, SECONDS_PER_EPOCH));
+        deal(address(localVault), manager, 100e18, true);
+
+        vm.warp(block.timestamp + (2 * SECONDS_PER_EPOCH));
+        uint256 epoch = localVault.currentEpoch() - 1;
+
+        vm.prank(operator);
+        vm.expectRevert(VaultErrors.FeePolicyNotFound.selector);
+        localVault.finalizeEpoch(epoch, 500e6);
+    }
+
+    /// @notice 已封较新 epoch 后再封更早 epoch，应按顺序约束回滚
+    function test_flow_finalize_reverts_whenOutOfOrderEpoch() public {
+        deal(address(vault), manager, 100e18, true);
+
+        vm.warp(block.timestamp + (3 * SECONDS_PER_EPOCH));
+        uint256 epochNewer = vault.currentEpoch() - 1;
+        uint256 epochOlder = epochNewer - 1;
+
+        vm.prank(operator);
+        vault.finalizeEpoch(epochNewer, 700e6);
+
+        vm.prank(operator);
+        vm.expectRevert(VaultErrors.InvalidFinalizeEpoch.selector);
+        vault.finalizeEpoch(epochOlder, 600e6);
+    }
+
+    /// @notice NAV 未创新高时不应收取业绩报酬，且高水位不下降
+    function test_flow_performanceFee_notCharged_whenNavDoesNotExceedHighWaterMark() public {
+        deal(address(vault), manager, 100e18, true);
+        uint256 epoch1 = vault.currentEpoch();
+
+        vm.prank(admin);
+        vault.scheduleFeePolicy(_performanceFeePolicy(), epoch1);
+
+        vm.warp(block.timestamp + (2 * SECONDS_PER_EPOCH));
+        vm.prank(operator);
+        vault.finalizeEpoch(epoch1, 700e6);
+
+        (,, uint256 nav1,) = vault.snapshots(epoch1);
+        assertEq(vault.highWaterMarkNav(), nav1);
+        assertEq(vault.feeClaimableOf(manager), 0);
+
+        uint256 epoch2 = epoch1 + 1;
+        vm.warp(block.timestamp + SECONDS_PER_EPOCH);
+        vm.prank(operator);
+        vault.finalizeEpoch(epoch2, 600e6);
+
+        (,, uint256 nav2,) = vault.snapshots(epoch2);
+        assertLt(nav2, nav1);
+        assertEq(vault.highWaterMarkNav(), nav1);
+        assertEq(vault.feeClaimableOf(manager), 0);
+    }
+
+    /// @notice 不同 epoch 的费率策略应独立生效，不串期
+    function test_flow_policySwitch_appliesDifferentEntryFeesPerEpoch() public {
+        uint256 managerShares = 100e18;
+        uint256 depositAmount = 100e6;
+        deal(address(vault), manager, managerShares, true);
+
+        vm.prank(address(this));
+        usdc.transfer(alice, depositAmount);
+        vm.startPrank(alice);
+        usdc.approve(address(vault), depositAmount);
+        (uint256 epoch1,) = vault.requestDeposit(depositAmount, address(0));
+        vm.stopPrank();
+
+        vm.warp(block.timestamp + SECONDS_PER_EPOCH + 1);
+        vm.prank(address(this));
+        usdc.transfer(bob, depositAmount);
+        vm.startPrank(bob);
+        usdc.approve(address(vault), depositAmount);
+        (uint256 epoch2,) = vault.requestDeposit(depositAmount, address(0));
+        vm.stopPrank();
+
+        assertEq(epoch2, epoch1 + 1);
+
+        vm.prank(admin);
+        vault.scheduleFeePolicy(_entryFeePolicy(), epoch1);
+        vm.prank(admin);
+        vault.scheduleFeePolicy(_zeroFeePolicy(), epoch2);
+
+        vm.warp(block.timestamp + SECONDS_PER_EPOCH + 1);
+        vm.prank(operator);
+        vault.finalizeEpoch(epoch1, 500e6);
+        vm.prank(operator);
+        vault.settleDeposits(epoch1, 10);
+
+        uint256 nav1 = (500e6 - depositAmount) * 1e18 / managerShares;
+        uint256 expectedAliceShares = ((depositAmount - (depositAmount * 1000 / 10_000)) * 1e18) / nav1;
+        assertEq(vault.balanceOf(alice), expectedAliceShares);
+
+        uint256 sharesAtEpoch2 = vault.totalSupply();
+        vm.prank(operator);
+        vault.finalizeEpoch(epoch2, 700e6);
+        vm.prank(operator);
+        vault.settleDeposits(epoch2, 10);
+
+        uint256 nav2 = (700e6 - depositAmount) * 1e18 / sharesAtEpoch2;
+        uint256 expectedBobShares = (depositAmount * 1e18) / nav2;
+        assertEq(vault.balanceOf(bob), expectedBobShares);
+    }
+
+    /// @notice 多笔申购按小批次结算后，结果应与同一 NAV 一次性结算一致
+    function test_flow_settleDeposits_inBatches_matchesExpectedFinalBalances() public {
+        uint256 managerShares = 200e18;
+        uint256 aliceAmount = 100e6;
+        uint256 bobAmount = 50e6;
+        uint256 ownerAmount = 30e6;
+        uint256 totalAum = 500e6;
+        deal(address(vault), manager, managerShares, true);
+
+        vm.prank(address(this));
+        usdc.transfer(alice, aliceAmount);
+        vm.prank(address(this));
+        usdc.transfer(bob, bobAmount);
+
+        vm.startPrank(alice);
+        usdc.approve(address(vault), aliceAmount);
+        (uint256 epoch,) = vault.requestDeposit(aliceAmount, address(0));
+        vm.stopPrank();
+
+        vm.startPrank(bob);
+        usdc.approve(address(vault), bobAmount);
+        vault.requestDeposit(bobAmount, address(0));
+        vm.stopPrank();
+
+        usdc.approve(address(vault), ownerAmount);
+        vault.requestDeposit(ownerAmount, address(0));
+
+        vm.prank(admin);
+        vault.scheduleFeePolicy(_zeroFeePolicy(), epoch);
+
+        vm.warp(block.timestamp + (2 * SECONDS_PER_EPOCH));
+        vm.prank(operator);
+        vault.finalizeEpoch(epoch, totalAum);
+
+        uint256 nav = (totalAum - (aliceAmount + bobAmount + ownerAmount)) * 1e18 / managerShares;
+        uint256 expectedAliceShares = (aliceAmount * 1e18) / nav;
+        uint256 expectedBobShares = (bobAmount * 1e18) / nav;
+        uint256 expectedOwnerShares = (ownerAmount * 1e18) / nav;
+
+        vm.prank(operator);
+        vault.settleDeposits(epoch, 1);
+        vm.prank(operator);
+        vault.settleDeposits(epoch, 1);
+        vm.prank(operator);
+        vault.settleDeposits(epoch, 10);
+
+        assertEq(vault.balanceOf(alice), expectedAliceShares);
+        assertEq(vault.balanceOf(bob), expectedBobShares);
+        assertEq(vault.balanceOf(address(this)), expectedOwnerShares);
+    }
+
     function _deployFactory(address initialOwner) internal returns (VaultFactory localFactory) {
         Vault implementation = new Vault();
         UpgradeableBeacon beacon = new UpgradeableBeacon(address(implementation), beaconOwner);
@@ -242,6 +399,28 @@ contract VaultFlowsTest is Test {
             exitSplit: SplitConfig({platformBps: 0, referrerBps: 0, managerBps: 0}),
             mgmtSplit: SplitConfig({platformBps: 0, referrerBps: 0, managerBps: 0}),
             performanceSplit: SplitConfig({platformBps: 0, referrerBps: 0, managerBps: 0}),
+            recipients: FeeRecipientConfig({platform: admin, manager: manager, reserve: executor})
+        });
+    }
+
+    function _entryFeePolicy() internal view returns (FeePolicy memory policy) {
+        policy = FeePolicy({
+            rates: FeeRateConfig({entryFeeBps: 1000, exitFeeBps: 0, mgmtFeeAnnualBps: 0, performanceFeeBps: 0}),
+            entrySplit: SplitConfig({platformBps: 3000, referrerBps: 2000, managerBps: 5000}),
+            exitSplit: SplitConfig({platformBps: 0, referrerBps: 0, managerBps: 10_000}),
+            mgmtSplit: SplitConfig({platformBps: 0, referrerBps: 0, managerBps: 10_000}),
+            performanceSplit: SplitConfig({platformBps: 0, referrerBps: 0, managerBps: 10_000}),
+            recipients: FeeRecipientConfig({platform: admin, manager: manager, reserve: executor})
+        });
+    }
+
+    function _performanceFeePolicy() internal view returns (FeePolicy memory policy) {
+        policy = FeePolicy({
+            rates: FeeRateConfig({entryFeeBps: 0, exitFeeBps: 0, mgmtFeeAnnualBps: 0, performanceFeeBps: 2000}),
+            entrySplit: SplitConfig({platformBps: 0, referrerBps: 0, managerBps: 10_000}),
+            exitSplit: SplitConfig({platformBps: 0, referrerBps: 0, managerBps: 10_000}),
+            mgmtSplit: SplitConfig({platformBps: 0, referrerBps: 0, managerBps: 10_000}),
+            performanceSplit: SplitConfig({platformBps: 0, referrerBps: 0, managerBps: 10_000}),
             recipients: FeeRecipientConfig({platform: admin, manager: manager, reserve: executor})
         });
     }
