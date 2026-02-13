@@ -392,13 +392,33 @@ contract Vault is ERC20Upgradeable, AccessControlUpgradeable, ReentrancyGuard, I
 
     // ===== 管理员操作 =====
 
-    function pauseDeposit() external override onlyRole(DEFAULT_ADMIN_ROLE) {}
+    function pauseDeposit() external override onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (depositPaused) {
+            revert DepositPaused();
+        }
+        depositPaused = true;
+    }
 
-    function unpauseDeposit() external override onlyRole(DEFAULT_ADMIN_ROLE) {}
+    function unpauseDeposit() external override onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (!depositPaused) {
+            revert DepositNotPaused();
+        }
+        depositPaused = false;
+    }
 
-    function pauseRedeem() external override onlyRole(DEFAULT_ADMIN_ROLE) {}
+    function pauseRedeem() external override onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (redeemPaused) {
+            revert RedeemPaused();
+        }
+        redeemPaused = true;
+    }
 
-    function unpauseRedeem() external override onlyRole(DEFAULT_ADMIN_ROLE) {}
+    function unpauseRedeem() external override onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (!redeemPaused) {
+            revert RedeemNotPaused();
+        }
+        redeemPaused = false;
+    }
 
     function scheduleFeePolicy(FeePolicy calldata policy, uint256 effectiveEpoch)
         external
