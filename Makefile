@@ -1,9 +1,9 @@
 .DEFAULT_GOAL := help
 .PHONY: help test build fmt-check fmt anvil \
-	deploy-vault-local deploy-vault-sepolia deploy-vault-mainnet \
-	deploy-factory-local deploy-factory-sepolia deploy-factory-mainnet \
-	upgrade-vault-local upgrade-vault-sepolia upgrade-vault-mainnet \
-	upgrade-factory-local upgrade-factory-sepolia upgrade-factory-mainnet
+	deploy-vault-local deploy-vault-sepolia deploy-vault-mainnet deploy-vault-polygon-amoy deploy-vault-polygon-mainnet \
+	deploy-factory-local deploy-factory-sepolia deploy-factory-mainnet deploy-factory-polygon-amoy deploy-factory-polygon-mainnet \
+	upgrade-vault-local upgrade-vault-sepolia upgrade-vault-mainnet upgrade-vault-polygon-amoy upgrade-vault-polygon-mainnet \
+	upgrade-factory-local upgrade-factory-sepolia upgrade-factory-mainnet upgrade-factory-polygon-amoy upgrade-factory-polygon-mainnet
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*##"} \
@@ -43,6 +43,18 @@ deploy-vault-mainnet: ## Deploy Vault beacon to Mainnet
 		--broadcast \
 		--verify -vvvv
 
+deploy-vault-polygon-amoy: ## Deploy Vault beacon to Polygon Amoy
+	forge script script/DeployVault.s.sol:DeployVaultScript \
+		--rpc-url polygon-amoy \
+		--broadcast \
+		--verify -vvvv
+
+deploy-vault-polygon-mainnet: ## Deploy Vault beacon to Polygon Mainnet
+	forge script script/DeployVault.s.sol:DeployVaultScript \
+		--rpc-url polygon-mainnet \
+		--broadcast \
+		--verify -vvvv
+
 deploy-factory-local: ## Deploy VaultFactory proxy to local anvil (requires BEACON)
 	forge script script/DeployVaultFactory.s.sol:DeployVaultFactoryScript \
 		--rpc-url local \
@@ -57,6 +69,18 @@ deploy-factory-sepolia: ## Deploy VaultFactory proxy to Sepolia (requires BEACON
 deploy-factory-mainnet: ## Deploy VaultFactory proxy to Mainnet (requires BEACON)
 	forge script script/DeployVaultFactory.s.sol:DeployVaultFactoryScript \
 		--rpc-url mainnet \
+		--broadcast \
+		--verify -vvvv
+
+deploy-factory-polygon-amoy: ## Deploy VaultFactory proxy to Polygon Amoy (requires BEACON)
+	forge script script/DeployVaultFactory.s.sol:DeployVaultFactoryScript \
+		--rpc-url polygon-amoy \
+		--broadcast \
+		--verify -vvvv
+
+deploy-factory-polygon-mainnet: ## Deploy VaultFactory proxy to Polygon Mainnet (requires BEACON)
+	forge script script/DeployVaultFactory.s.sol:DeployVaultFactoryScript \
+		--rpc-url polygon-mainnet \
 		--broadcast \
 		--verify -vvvv
 
@@ -77,6 +101,18 @@ upgrade-vault-mainnet: ## Upgrade beacon implementation to VaultV2 on Mainnet (r
 		--broadcast \
 		--verify -vvvv
 
+upgrade-vault-polygon-amoy: ## Upgrade beacon implementation to VaultV2 on Polygon Amoy (requires BEACON)
+	forge script script/UpgradeVault.s.sol:UpgradeVaultScript \
+		--rpc-url polygon-amoy \
+		--broadcast \
+		--verify -vvvv
+
+upgrade-vault-polygon-mainnet: ## Upgrade beacon implementation to VaultV2 on Polygon Mainnet (requires BEACON)
+	forge script script/UpgradeVault.s.sol:UpgradeVaultScript \
+		--rpc-url polygon-mainnet \
+		--broadcast \
+		--verify -vvvv
+
 upgrade-factory-local: ## Upgrade VaultFactory proxy implementation to VaultFactoryV2 on local anvil (requires FACTORY_PROXY)
 	forge script script/UpgradeVaultFactory.s.sol:UpgradeVaultFactoryScript \
 		--rpc-url local \
@@ -91,5 +127,17 @@ upgrade-factory-sepolia: ## Upgrade VaultFactory proxy implementation to VaultFa
 upgrade-factory-mainnet: ## Upgrade VaultFactory proxy implementation to VaultFactoryV2 on Mainnet (requires FACTORY_PROXY)
 	forge script script/UpgradeVaultFactory.s.sol:UpgradeVaultFactoryScript \
 		--rpc-url mainnet \
+		--broadcast \
+		--verify -vvvv
+
+upgrade-factory-polygon-amoy: ## Upgrade VaultFactory proxy implementation to VaultFactoryV2 on Polygon Amoy (requires FACTORY_PROXY)
+	forge script script/UpgradeVaultFactory.s.sol:UpgradeVaultFactoryScript \
+		--rpc-url polygon-amoy \
+		--broadcast \
+		--verify -vvvv
+
+upgrade-factory-polygon-mainnet: ## Upgrade VaultFactory proxy implementation to VaultFactoryV2 on Polygon Mainnet (requires FACTORY_PROXY)
+	forge script script/UpgradeVaultFactory.s.sol:UpgradeVaultFactoryScript \
+		--rpc-url polygon-mainnet \
 		--broadcast \
 		--verify -vvvv

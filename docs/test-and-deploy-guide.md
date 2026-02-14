@@ -1,6 +1,6 @@
 # 测试与部署指南
 
-本文档用于指导开发人员在本地与测试网/主网执行合约测试、部署与升级。
+本文档用于指导开发人员在本地与测试网/主网（含 Polygon）执行合约测试、部署与升级。
 
 ## 1. 前置要求
 
@@ -30,6 +30,8 @@ PRIVATE_KEY=
 LOCAL_RPC_URL=http://127.0.0.1:8545
 SEPOLIA_RPC_URL=
 MAINNET_RPC_URL=
+POLYGON_AMOY_RPC_URL=
+POLYGON_MAINNET_RPC_URL=
 ETHERSCAN_API_KEY=
 BEACON=
 FACTORY_PROXY=
@@ -38,7 +40,7 @@ FACTORY_PROXY=
 变量说明：
 
 1. `PRIVATE_KEY`：广播交易账户私钥（部署与升级都会使用）。
-2. `LOCAL_RPC_URL` / `SEPOLIA_RPC_URL` / `MAINNET_RPC_URL`：对应网络 RPC。
+2. `LOCAL_RPC_URL` / `SEPOLIA_RPC_URL` / `MAINNET_RPC_URL` / `POLYGON_AMOY_RPC_URL` / `POLYGON_MAINNET_RPC_URL`：对应网络 RPC。
 3. `ETHERSCAN_API_KEY`：仅 `--verify` 时需要。
 4. `BEACON`：部署 Factory 与升级 Vault 时使用的 Beacon 地址。
 5. `FACTORY_PROXY`：升级 VaultFactory 时使用的代理地址。
@@ -136,6 +138,24 @@ make deploy-vault-mainnet
 make deploy-factory-mainnet
 ```
 
+Polygon Amoy：
+
+```bash
+source .env
+make deploy-vault-polygon-amoy
+# 将输出的 beacon 地址写入 .env 的 BEACON
+make deploy-factory-polygon-amoy
+```
+
+Polygon Mainnet：
+
+```bash
+source .env
+make deploy-vault-polygon-mainnet
+# 将输出的 beacon 地址写入 .env 的 BEACON
+make deploy-factory-polygon-mainnet
+```
+
 说明：
 
 1. 上述命令包含 `--verify`，需要 `ETHERSCAN_API_KEY`。
@@ -175,6 +195,20 @@ Mainnet 升级：
 ```bash
 source .env
 make upgrade-vault-mainnet
+```
+
+Polygon Amoy 升级：
+
+```bash
+source .env
+make upgrade-vault-polygon-amoy
+```
+
+Polygon Mainnet 升级：
+
+```bash
+source .env
+make upgrade-vault-polygon-mainnet
 ```
 
 升级后建议验证：
@@ -217,6 +251,20 @@ source .env
 make upgrade-factory-mainnet
 ```
 
+Polygon Amoy 升级：
+
+```bash
+source .env
+make upgrade-factory-polygon-amoy
+```
+
+Polygon Mainnet 升级：
+
+```bash
+source .env
+make upgrade-factory-polygon-mainnet
+```
+
 ## 7. 常见问题
 
 1. 报错 `OwnableUnauthorizedAccount`：当前私钥不是 Beacon owner。
@@ -224,3 +272,4 @@ make upgrade-factory-mainnet
 3. 验证失败：检查 `ETHERSCAN_API_KEY` 与网络是否匹配。
 4. 升级脚本报 `BEACON` 未设置：补充 `.env` 中 `BEACON=...`。
 5. 升级 Factory 报 `FACTORY_PROXY` 未设置：补充 `.env` 中 `FACTORY_PROXY=...`。
+6. Polygon 网络部署报 `Insufficient funds`：Polygon 链上 gas token 是 `POL`，需确保广播账户有足够 `POL` 支付 gas。
