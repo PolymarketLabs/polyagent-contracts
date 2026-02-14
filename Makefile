@@ -1,9 +1,9 @@
 .DEFAULT_GOAL := help
 .PHONY: help test build fmt-check fmt anvil \
-	deploy-vault-local deploy-vault-sepolia deploy-vault-mainnet \
-	deploy-factory-local deploy-factory-sepolia deploy-factory-mainnet \
-	upgrade-vault-local upgrade-vault-sepolia upgrade-vault-mainnet \
-	upgrade-factory-local upgrade-factory-sepolia upgrade-factory-mainnet
+	deploy-vault-local deploy-vault-polygon-amoy deploy-vault-polygon-mainnet \
+	deploy-factory-local deploy-factory-polygon-amoy deploy-factory-polygon-mainnet \
+	upgrade-vault-local upgrade-vault-polygon-amoy upgrade-vault-polygon-mainnet \
+	upgrade-factory-local upgrade-factory-polygon-amoy upgrade-factory-polygon-mainnet
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*##"} \
@@ -31,15 +31,15 @@ deploy-vault-local: ## Deploy Vault beacon to local anvil
 		--rpc-url local \
 		--broadcast -vvvv
 
-deploy-vault-sepolia: ## Deploy Vault beacon to Sepolia
+deploy-vault-polygon-amoy: ## Deploy Vault beacon to Polygon Amoy
 	forge script script/DeployVault.s.sol:DeployVaultScript \
-		--rpc-url sepolia \
+		--rpc-url polygon-amoy \
 		--broadcast \
 		--verify -vvvv
 
-deploy-vault-mainnet: ## Deploy Vault beacon to Mainnet
+deploy-vault-polygon-mainnet: ## Deploy Vault beacon to Polygon Mainnet
 	forge script script/DeployVault.s.sol:DeployVaultScript \
-		--rpc-url mainnet \
+		--rpc-url polygon-mainnet \
 		--broadcast \
 		--verify -vvvv
 
@@ -48,15 +48,15 @@ deploy-factory-local: ## Deploy VaultFactory proxy to local anvil (requires BEAC
 		--rpc-url local \
 		--broadcast -vvvv
 
-deploy-factory-sepolia: ## Deploy VaultFactory proxy to Sepolia (requires BEACON)
+deploy-factory-polygon-amoy: ## Deploy VaultFactory proxy to Polygon Amoy (requires BEACON)
 	forge script script/DeployVaultFactory.s.sol:DeployVaultFactoryScript \
-		--rpc-url sepolia \
+		--rpc-url polygon-amoy \
 		--broadcast \
 		--verify -vvvv
 
-deploy-factory-mainnet: ## Deploy VaultFactory proxy to Mainnet (requires BEACON)
+deploy-factory-polygon-mainnet: ## Deploy VaultFactory proxy to Polygon Mainnet (requires BEACON)
 	forge script script/DeployVaultFactory.s.sol:DeployVaultFactoryScript \
-		--rpc-url mainnet \
+		--rpc-url polygon-mainnet \
 		--broadcast \
 		--verify -vvvv
 
@@ -65,15 +65,15 @@ upgrade-vault-local: ## Upgrade beacon implementation to VaultV2 on local anvil 
 		--rpc-url local \
 		--broadcast -vvvv
 
-upgrade-vault-sepolia: ## Upgrade beacon implementation to VaultV2 on Sepolia (requires BEACON)
+upgrade-vault-polygon-amoy: ## Upgrade beacon implementation to VaultV2 on Polygon Amoy (requires BEACON)
 	forge script script/UpgradeVault.s.sol:UpgradeVaultScript \
-		--rpc-url sepolia \
+		--rpc-url polygon-amoy \
 		--broadcast \
 		--verify -vvvv
 
-upgrade-vault-mainnet: ## Upgrade beacon implementation to VaultV2 on Mainnet (requires BEACON)
+upgrade-vault-polygon-mainnet: ## Upgrade beacon implementation to VaultV2 on Polygon Mainnet (requires BEACON)
 	forge script script/UpgradeVault.s.sol:UpgradeVaultScript \
-		--rpc-url mainnet \
+		--rpc-url polygon-mainnet \
 		--broadcast \
 		--verify -vvvv
 
@@ -82,14 +82,14 @@ upgrade-factory-local: ## Upgrade VaultFactory proxy implementation to VaultFact
 		--rpc-url local \
 		--broadcast -vvvv
 
-upgrade-factory-sepolia: ## Upgrade VaultFactory proxy implementation to VaultFactoryV2 on Sepolia (requires FACTORY_PROXY)
+upgrade-factory-polygon-amoy: ## Upgrade VaultFactory proxy implementation to VaultFactoryV2 on Polygon Amoy (requires FACTORY_PROXY)
 	forge script script/UpgradeVaultFactory.s.sol:UpgradeVaultFactoryScript \
-		--rpc-url sepolia \
+		--rpc-url polygon-amoy \
 		--broadcast \
 		--verify -vvvv
 
-upgrade-factory-mainnet: ## Upgrade VaultFactory proxy implementation to VaultFactoryV2 on Mainnet (requires FACTORY_PROXY)
+upgrade-factory-polygon-mainnet: ## Upgrade VaultFactory proxy implementation to VaultFactoryV2 on Polygon Mainnet (requires FACTORY_PROXY)
 	forge script script/UpgradeVaultFactory.s.sol:UpgradeVaultFactoryScript \
-		--rpc-url mainnet \
+		--rpc-url polygon-mainnet \
 		--broadcast \
 		--verify -vvvv
