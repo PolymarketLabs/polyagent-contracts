@@ -8,25 +8,25 @@ import {BeaconProxy} from "@openzeppelin/contracts/proxy/beacon/BeaconProxy.sol"
 import {UpgradeableBeacon} from "@openzeppelin/contracts/proxy/beacon/UpgradeableBeacon.sol";
 import {IVault} from "./interfaces/IVault.sol";
 import {IVaultFactory} from "./interfaces/IVaultFactory.sol";
-import {Fund} from "./factory/VaultFactoryTypes.sol";
-import {VaultFactoryEvents} from "./factory/VaultFactoryEvents.sol";
-import {VaultFactoryErrors} from "./factory/VaultFactoryErrors.sol";
 
-contract VaultFactory is
-    Initializable,
-    OwnableUpgradeable,
-    UUPSUpgradeable,
-    IVaultFactory,
-    VaultFactoryEvents,
-    VaultFactoryErrors
-{
-    // ===== 核心配置 =====
-    UpgradeableBeacon public beacon; // Beacon 合约地址（统一管理 Vault 实现）
+contract VaultFactory is Initializable, OwnableUpgradeable, UUPSUpgradeable, IVaultFactory {
+    struct Fund {
+        address vault;
+        address baseAsset;
+        address manager;
+        uint256 createdAt;
+    }
 
-    // ===== 基金索引 =====
-    uint256 public nextFundId; // 下一个可分配的基金 ID（从 1 开始）
-    mapping(uint256 => Fund) public funds; // fundId => 基金元信息
-    mapping(address => uint256) public fundIds; // vault 地址 => fundId
+    error ZeroAddress();
+    error InvalidBeacon();
+
+    // ===== Core configuration =====
+    UpgradeableBeacon public beacon; // Beacon contract address (manages the shared Vault implementation)
+
+    // ===== Fund indexing =====
+    uint256 public nextFundId; // Next fund ID to assign (starts from 1)
+    mapping(uint256 => Fund) public funds; // fundId => fund metadata
+    mapping(address => uint256) public fundIds; // vault address => fundId
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -37,7 +37,7 @@ contract VaultFactory is
         __Ownable_init(initialOwner);
 
         if (_beacon == address(0)) revert ZeroAddress();
-        // 校验 beacon 地址有效：可读取 implementation 且实现地址非零。
+        // Validate beacon address: implementation() must be callable and non-zero.
         try UpgradeableBeacon(_beacon).implementation() returns (address implementation) {
             if (implementation == address(0)) revert InvalidBeacon();
         } catch {
@@ -48,7 +48,7 @@ contract VaultFactory is
         nextFundId = 1;
     }
 
-    // ===== 基金创建 =====
+    // ===== Fund creation =====
     function createFund(
         string memory tokenName,
         string memory tokenSymbol,
@@ -57,31 +57,36 @@ contract VaultFactory is
         address admin,
         address operator,
         address executor,
-        uint256 secondsPerEpoch
+        uint256 secondsPerEpoch,
+        uint256 initialMinDepositAmount,
+        uint256 initialMinRedeemShares
     ) external override onlyOwner returns (address vault) {
         if (address(0) == manager) revert ZeroAddress();
         bytes memory initData = abi.encodeCall(
-            IVault.initialize, (tokenName, tokenSymbol, baseAsset, admin, operator, executor, secondsPerEpoch)
+            IVault.initialize,
+            (
+                tokenName,
+                tokenSymbol,
+                baseAsset,
+                admin,
+                operator,
+                executor,
+                secondsPerEpoch,
+                initialMinDepositAmount,
+                initialMinRedeemShares
+            )
         );
 
         vault = address(new BeaconProxy(address(beacon), initData));
 
         uint256 fundId = nextFundId++;
-        funds[fundId] = Fund({
-            vault: vault,
-            baseAsset: baseAsset,
-            manager: manager,
-            admin: admin,
-            operator: operator,
-            executor: executor,
-            createdAt: block.timestamp
-        });
+        funds[fundId] = Fund({vault: vault, baseAsset: baseAsset, manager: manager, createdAt: block.timestamp});
         fundIds[vault] = fundId;
 
-        emit FundCreated(vault, baseAsset, manager, admin, operator, executor, block.timestamp, fundId);
+        emit FundCreated(vault, baseAsset, manager, block.timestamp, fundId);
     }
 
-    // ===== 只读查询 =====
+    // ===== Read functions =====
     function totalFunds() external view override returns (uint256) {
         return nextFundId - 1;
     }

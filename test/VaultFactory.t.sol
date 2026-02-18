@@ -4,14 +4,21 @@ pragma solidity ^0.8.30;
 import {Test} from "forge-std/Test.sol";
 import {Vault} from "../src/Vault.sol";
 import {VaultFactory} from "../src/VaultFactory.sol";
-import {VaultFactoryEvents} from "../src/factory/VaultFactoryEvents.sol";
-import {VaultFactoryErrors} from "../src/factory/VaultFactoryErrors.sol";
+import {IVaultFactory} from "../src/interfaces/IVaultFactory.sol";
 import {USDC} from "./mocks/USDC.sol";
 import {UpgradeableBeacon} from "@openzeppelin/contracts/proxy/beacon/UpgradeableBeacon.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
-contract VaultFactoryTest is Test, VaultFactoryEvents {
+contract ZeroImplementationBeacon {
+    function implementation() external pure returns (address) {
+        return address(0);
+    }
+}
+
+contract VaultFactoryTest is Test {
     uint256 public constant SECONDS_PER_EPOCH = 86400;
+    uint256 public constant INITIAL_MIN_DEPOSIT_AMOUNT = 1e6;
+    uint256 public constant INITIAL_MIN_REDEEM_SHARES = 1e18;
 
     USDC public usdc;
     VaultFactory public factory;
@@ -39,7 +46,7 @@ contract VaultFactoryTest is Test, VaultFactoryEvents {
         VaultFactory implementation = new VaultFactory();
         bytes memory initData = abi.encodeCall(VaultFactory.initialize, (address(0), owner));
 
-        vm.expectRevert(VaultFactoryErrors.ZeroAddress.selector);
+        vm.expectRevert(VaultFactory.ZeroAddress.selector);
         new ERC1967Proxy(address(implementation), initData);
     }
 
@@ -48,7 +55,17 @@ contract VaultFactoryTest is Test, VaultFactoryEvents {
         VaultFactory implementation = new VaultFactory();
         bytes memory initData = abi.encodeCall(VaultFactory.initialize, (address(this), owner));
 
-        vm.expectRevert(VaultFactoryErrors.InvalidBeacon.selector);
+        vm.expectRevert(VaultFactory.InvalidBeacon.selector);
+        new ERC1967Proxy(address(implementation), initData);
+    }
+
+    /// @notice initialize 传入 implementation 为零地址的 beacon 时应回滚
+    function test_initialize_reverts_whenBeaconImplementationIsZero() public {
+        ZeroImplementationBeacon zeroImplBeacon = new ZeroImplementationBeacon();
+        VaultFactory implementation = new VaultFactory();
+        bytes memory initData = abi.encodeCall(VaultFactory.initialize, (address(zeroImplBeacon), owner));
+
+        vm.expectRevert(VaultFactory.InvalidBeacon.selector);
         new ERC1967Proxy(address(implementation), initData);
     }
 
@@ -73,16 +90,52 @@ contract VaultFactoryTest is Test, VaultFactoryEvents {
         vm.prank(outsider);
         vm.expectRevert();
         factory.createFund(
-            "Alpha Fund Share", "AFS", address(usdc), manager, admin, operator, executor, SECONDS_PER_EPOCH
+            "Alpha Fund Share",
+            "AFS",
+            address(usdc),
+            manager,
+            admin,
+            operator,
+            executor,
+            SECONDS_PER_EPOCH,
+            INITIAL_MIN_DEPOSIT_AMOUNT,
+            INITIAL_MIN_REDEEM_SHARES
         );
     }
 
     /// @notice manager 为零地址时 createFund 应回滚
     function test_createFund_reverts_whenManagerIsZero() public {
         vm.prank(owner);
-        vm.expectRevert(VaultFactoryErrors.ZeroAddress.selector);
+        vm.expectRevert(VaultFactory.ZeroAddress.selector);
         factory.createFund(
-            "Alpha Fund Share", "AFS", address(usdc), address(0), admin, operator, executor, SECONDS_PER_EPOCH
+            "Alpha Fund Share",
+            "AFS",
+            address(usdc),
+            address(0),
+            admin,
+            operator,
+            executor,
+            SECONDS_PER_EPOCH,
+            INITIAL_MIN_DEPOSIT_AMOUNT,
+            INITIAL_MIN_REDEEM_SHARES
+        );
+    }
+
+    /// @notice baseAsset 非合约地址时 createFund 应回滚
+    function test_createFund_reverts_whenBaseAssetIsNotContract() public {
+        vm.prank(owner);
+        vm.expectRevert();
+        factory.createFund(
+            "Alpha Fund Share",
+            "AFS",
+            outsider,
+            manager,
+            admin,
+            operator,
+            executor,
+            SECONDS_PER_EPOCH,
+            INITIAL_MIN_DEPOSIT_AMOUNT,
+            INITIAL_MIN_REDEEM_SHARES
         );
     }
 
@@ -90,27 +143,25 @@ contract VaultFactoryTest is Test, VaultFactoryEvents {
     function test_createFund_success_registersFundAndVaultInitialization() public {
         vm.prank(owner);
         address vaultAddr = factory.createFund(
-            "Alpha Fund Share", "AFS", address(usdc), manager, admin, operator, executor, SECONDS_PER_EPOCH
+            "Alpha Fund Share",
+            "AFS",
+            address(usdc),
+            manager,
+            admin,
+            operator,
+            executor,
+            SECONDS_PER_EPOCH,
+            INITIAL_MIN_DEPOSIT_AMOUNT,
+            INITIAL_MIN_REDEEM_SHARES
         );
 
         assertEq(factory.totalFunds(), 1);
         assertEq(factory.fundIds(vaultAddr), 1);
 
-        (
-            address fundVault,
-            address fundBaseAsset,
-            address fundManager,
-            address fundAdmin,
-            address fundOperator,
-            address fundExecutor,
-            uint256 fundCreatedAt
-        ) = factory.funds(1);
+        (address fundVault, address fundBaseAsset, address fundManager, uint256 fundCreatedAt) = factory.funds(1);
         assertEq(fundVault, vaultAddr);
         assertEq(fundBaseAsset, address(usdc));
         assertEq(fundManager, manager);
-        assertEq(fundAdmin, admin);
-        assertEq(fundOperator, operator);
-        assertEq(fundExecutor, executor);
         assertEq(fundCreatedAt, block.timestamp);
 
         Vault vault = Vault(vaultAddr);
@@ -121,16 +172,27 @@ contract VaultFactoryTest is Test, VaultFactoryEvents {
         assertEq(vault.operator(), operator);
         assertEq(vault.executor(), executor);
         assertEq(vault.secondsPerEpoch(), SECONDS_PER_EPOCH);
+        assertEq(vault.minDepositAmount(), INITIAL_MIN_DEPOSIT_AMOUNT);
+        assertEq(vault.minRedeemShares(), INITIAL_MIN_REDEEM_SHARES);
     }
 
     /// @notice 成功创建基金时应触发 FundCreated 事件
     function test_createFund_success_emitsFundCreated() public {
         vm.prank(owner);
         vm.expectEmit(false, true, true, true);
-        emit FundCreated(address(0), address(usdc), manager, admin, operator, executor, block.timestamp, 1);
+        emit IVaultFactory.FundCreated(address(0), address(usdc), manager, block.timestamp, 1);
 
         address vaultAddr = factory.createFund(
-            "Alpha Fund Share", "AFS", address(usdc), manager, admin, operator, executor, SECONDS_PER_EPOCH
+            "Alpha Fund Share",
+            "AFS",
+            address(usdc),
+            manager,
+            admin,
+            operator,
+            executor,
+            SECONDS_PER_EPOCH,
+            INITIAL_MIN_DEPOSIT_AMOUNT,
+            INITIAL_MIN_REDEEM_SHARES
         );
 
         assertEq(factory.fundIds(vaultAddr), 1);
@@ -140,10 +202,28 @@ contract VaultFactoryTest is Test, VaultFactoryEvents {
     function test_createFund_success_assignsIncrementingFundIds() public {
         vm.startPrank(owner);
         address vault1 = factory.createFund(
-            "Alpha Fund Share", "AFS", address(usdc), manager, admin, operator, executor, SECONDS_PER_EPOCH
+            "Alpha Fund Share",
+            "AFS",
+            address(usdc),
+            manager,
+            admin,
+            operator,
+            executor,
+            SECONDS_PER_EPOCH,
+            INITIAL_MIN_DEPOSIT_AMOUNT,
+            INITIAL_MIN_REDEEM_SHARES
         );
         address vault2 = factory.createFund(
-            "Beta Fund Share", "BFS", address(usdc), manager, admin, operator, executor, SECONDS_PER_EPOCH
+            "Beta Fund Share",
+            "BFS",
+            address(usdc),
+            manager,
+            admin,
+            operator,
+            executor,
+            SECONDS_PER_EPOCH,
+            INITIAL_MIN_DEPOSIT_AMOUNT,
+            INITIAL_MIN_REDEEM_SHARES
         );
         vm.stopPrank();
 
