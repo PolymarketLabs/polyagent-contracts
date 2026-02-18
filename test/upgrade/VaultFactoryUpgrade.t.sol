@@ -11,6 +11,8 @@ import {USDC} from "../mocks/USDC.sol";
 
 contract VaultFactoryUpgradeTest is Test {
     uint256 public constant SECONDS_PER_EPOCH = 86400;
+    uint256 public constant INITIAL_MIN_DEPOSIT_AMOUNT = 1e6;
+    uint256 public constant INITIAL_MIN_REDEEM_SHARES = 1e18;
 
     USDC public usdc;
     UpgradeableBeacon public beacon;
@@ -47,7 +49,16 @@ contract VaultFactoryUpgradeTest is Test {
     function test_upgradeToV2_preservesState_and_updatesInitializedVersion() public {
         vm.prank(factoryOwner);
         address vaultAddr = factory.createFund(
-            "Alpha Fund Share", "AFS", address(usdc), manager, admin, operator, executor, SECONDS_PER_EPOCH
+            "Alpha Fund Share",
+            "AFS",
+            address(usdc),
+            manager,
+            admin,
+            operator,
+            executor,
+            SECONDS_PER_EPOCH,
+            INITIAL_MIN_DEPOSIT_AMOUNT,
+            INITIAL_MIN_REDEEM_SHARES
         );
         assertEq(factory.initializedVersion(), 1);
         assertEq(factory.totalFunds(), 1);
@@ -63,21 +74,10 @@ contract VaultFactoryUpgradeTest is Test {
         assertEq(upgraded.totalFunds(), 1);
         assertEq(upgraded.fundIds(vaultAddr), 1);
 
-        (
-            address fundVault,
-            address fundBaseAsset,
-            address fundManager,
-            address fundAdmin,
-            address fundOperator,
-            address fundExecutor,
-            uint256 fundCreatedAt
-        ) = upgraded.funds(1);
+        (address fundVault, address fundBaseAsset, address fundManager, uint256 fundCreatedAt) = upgraded.funds(1);
         assertEq(fundVault, vaultAddr);
         assertEq(fundBaseAsset, address(usdc));
         assertEq(fundManager, manager);
-        assertEq(fundAdmin, admin);
-        assertEq(fundOperator, operator);
-        assertEq(fundExecutor, executor);
         assertTrue(fundCreatedAt > 0);
     }
 

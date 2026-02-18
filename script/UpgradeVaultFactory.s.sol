@@ -7,10 +7,14 @@ import {VaultFactory} from "../src/VaultFactory.sol";
 import {VaultFactoryV2} from "../src/VaultFactoryV2.sol";
 
 contract UpgradeVaultFactoryScript is Script {
+    error InvalidFactoryProxy();
+
     uint256 pk = vm.envUint("PRIVATE_KEY");
     address factoryProxy = vm.envAddress("FACTORY_PROXY");
 
     function run() external {
+        _validateFactoryProxy(factoryProxy);
+
         vm.startBroadcast(pk);
 
         // 1) 部署新的 Factory 实现
@@ -25,5 +29,16 @@ contract UpgradeVaultFactoryScript is Script {
 
         console2.log("factory proxy:", address(factory));
         console2.log("new factory implementation:", address(implementationV2));
+    }
+
+    function _validateFactoryProxy(address proxy) internal view {
+        if (proxy == address(0) || proxy.code.length == 0) {
+            revert InvalidFactoryProxy();
+        }
+
+        try VaultFactory(proxy).initializedVersion() returns (uint64) {}
+        catch {
+            revert InvalidFactoryProxy();
+        }
     }
 }

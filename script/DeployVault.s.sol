@@ -12,7 +12,7 @@ contract DeployVaultScript is Script {
     function run() external {
         vm.startBroadcast(pk);
 
-        address owner = msg.sender;
+        address owner = vm.addr(pk);
         // 部署 Vault 实现合约
         Vault implementation = new Vault();
         // 部署 UpgradeableBeacon，并设置 owner

@@ -7,10 +7,15 @@ import {UpgradeableBeacon} from "@openzeppelin/contracts/proxy/beacon/Upgradeabl
 import {VaultV2} from "../src/VaultV2.sol";
 
 contract UpgradeVaultScript is Script {
+    error InvalidBeaconAddress();
+    error InvalidBeaconImplementation();
+
     uint256 pk = vm.envUint("PRIVATE_KEY");
     address beaconAddress = vm.envAddress("BEACON");
 
     function run() external {
+        _validateBeacon(beaconAddress);
+
         vm.startBroadcast(pk);
 
         // 部署新实现并升级 beacon 指向，需广播账户为 beacon owner。
@@ -21,5 +26,19 @@ contract UpgradeVaultScript is Script {
         vm.stopBroadcast();
         console2.log("beacon:", address(beacon));
         console2.log("new implementation:", address(implementationV2));
+    }
+
+    function _validateBeacon(address beacon) internal view {
+        if (beacon == address(0) || beacon.code.length == 0) {
+            revert InvalidBeaconAddress();
+        }
+
+        try UpgradeableBeacon(beacon).implementation() returns (address implementation) {
+            if (implementation == address(0)) {
+                revert InvalidBeaconImplementation();
+            }
+        } catch {
+            revert InvalidBeaconAddress();
+        }
     }
 }

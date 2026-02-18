@@ -2,21 +2,27 @@
 pragma solidity ^0.8.30;
 
 interface IVaultFactory {
-    /// @notice 初始化工厂（仅可调用一次）
-    /// @param beacon Vault Beacon 地址
-    /// @param initialOwner 工厂 owner 地址
+    event FundCreated(
+        address indexed vault, address indexed baseAsset, address indexed manager, uint256 createdAt, uint256 fundId
+    );
+
+    /// @notice Initializes the factory (callable only once).
+    /// @param beacon Vault beacon address.
+    /// @param initialOwner Factory owner address.
     function initialize(address beacon, address initialOwner) external;
 
-    /// @notice 创建并初始化一个新的基金 Vault（仅工厂 owner 可调用）
-    /// @param tokenName 份额代币名称
-    /// @param tokenSymbol 份额代币符号
-    /// @param baseAsset 基础资产地址
-    /// @param manager 基金经理地址
-    /// @param admin Vault 管理员地址
-    /// @param operator Vault 运营地址
-    /// @param executor Vault 执行钱包地址
-    /// @param secondsPerEpoch 结算周期长度（秒）
-    /// @return vault 新建 Vault 代理地址
+    /// @notice Creates and initializes a new fund Vault (owner only).
+    /// @param tokenName Share token name.
+    /// @param tokenSymbol Share token symbol.
+    /// @param baseAsset Base asset address.
+    /// @param manager Fund manager address.
+    /// @param admin Vault admin address.
+    /// @param operator Vault operator address.
+    /// @param executor Vault executor wallet address.
+    /// @param secondsPerEpoch Settlement epoch length in seconds.
+    /// @param initialMinDepositAmount Initial minimum deposit amount.
+    /// @param initialMinRedeemShares Initial minimum redeem shares.
+    /// @return vault Newly created Vault proxy address.
     function createFund(
         string memory tokenName,
         string memory tokenSymbol,
@@ -25,12 +31,14 @@ interface IVaultFactory {
         address admin,
         address operator,
         address executor,
-        uint256 secondsPerEpoch
+        uint256 secondsPerEpoch,
+        uint256 initialMinDepositAmount,
+        uint256 initialMinRedeemShares
     ) external returns (address vault);
 
-    /// @notice 返回已创建基金总数
+    /// @notice Returns the total number of created funds.
     function totalFunds() external view returns (uint256);
 
-    /// @notice 返回初始化版本号（initializer/reinitializer）
+    /// @notice Returns the initialized version (initializer/reinitializer).
     function initializedVersion() external view returns (uint64);
 }

@@ -13,6 +13,8 @@ import {USDC} from "../mocks/USDC.sol";
 contract VaultUpgradeTest is Test {
     uint256 public constant INITIAL_TIMESTAMP = 1767225600; // 2026-01-01 00:00:00 UTC
     uint256 public constant SECONDS_PER_EPOCH = 86400;
+    uint256 public constant INITIAL_MIN_DEPOSIT_AMOUNT = 1e6;
+    uint256 public constant INITIAL_MIN_REDEEM_SHARES = 1e18;
 
     USDC public usdc;
     UpgradeableBeacon public beacon;
@@ -39,7 +41,16 @@ contract VaultUpgradeTest is Test {
 
         vm.prank(factoryOwner);
         address proxy = factory.createFund(
-            "Alpha Fund Share", "AFS", address(usdc), manager, admin, operator, executor, SECONDS_PER_EPOCH
+            "Alpha Fund Share",
+            "AFS",
+            address(usdc),
+            manager,
+            admin,
+            operator,
+            executor,
+            SECONDS_PER_EPOCH,
+            INITIAL_MIN_DEPOSIT_AMOUNT,
+            INITIAL_MIN_REDEEM_SHARES
         );
         vault = Vault(proxy);
     }

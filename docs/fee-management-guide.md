@@ -91,7 +91,7 @@ netRedeemAssets = grossRedeemAssets - exitFee
 ### 4.3 管理费（MGMT）
 
 ```text
-mgmtFee = totalAum * mgmtFeeAnnualBps * secondsPerEpoch / (365 days * 10_000)
+mgmtFee = totalAum * mgmtFeeAnnualBps * deltaEpoch * secondsPerEpoch / (365 days * 10_000)
 ```
 
 在封账阶段计提。
